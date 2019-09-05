@@ -81,7 +81,7 @@ if [ $stage -le 1 ]; then
         $data_dir/$x $mfcc || exit 1;
     done
 
-    $utils/mkgraph.sh $data_dir/lang_test_$lm $exp_dir/mono_$mfcc $exp_dir/mono_$mfcc/graph
+    utils/mkgraph.sh $data_dir/lang_test_$lm $exp_dir/mono_$mfcc $exp_dir/mono_$mfcc/graph
     for dset in ${test_sets}; do
       steps/decode.sh --nj $decode_nj --cmd "$decode_cmd"  --num-threads 4 \
           $exp_dir/mono_$mfcc/graph $data_dir/${dset} $exp_dir/mono_$mfcc/decode_${dset} &
@@ -263,14 +263,14 @@ if [ $stage -le 6 ]; then
     for x in ${train_set}; do  
       local_pyspeech/fetch_feats.sh --feat_source pyspeech \
         $data_dir/$x \
-        $modspec || exit 1;
+        $mfcc || exit 1;
     done
 
     steps/align_fmllr.sh --nj 80 --cmd "$train_cmd" \
       $data_dir/$train_set \
       $data_dir/lang \
-      $exp_dir/tri3_${modspec} \
-      $exp_dir/tri3_${modspec}_ali || exit 1;
+      $exp_dir/tri3_${mfcc} \
+      $exp_dir/tri3_${mfcc}_ali || exit 1;
   
   fi
 
@@ -279,10 +279,11 @@ if [ $stage -le 6 ]; then
    for x in ${train_set}; do  
       local_pyspeech/fetch_feats.sh --feat_source pyspeech \
         $data_dir/$x \
-        $mfcc || exit 1;
+        $modspec || exit 1;
     done
     
     steps/nnet2/train_tanh.sh --cmd "queue.pl --gpu 1" \
+     --feat_type "raw" \
      --hidden_layer_dim 256 \
      --num_hidden_layers 4 \
      --num_epochs 20 \
@@ -293,7 +294,7 @@ if [ $stage -le 6 ]; then
      --parallel_opts "--num-threads 1 --mem 1G" \
      $data_dir/$train_set \
      $data_dir/lang \
-     $exp_dir/tri3_${modspec}_ali \
+     $exp_dir/tri3_${mfcc}_ali \
      $exp_dir/hybrid_tri3_${modspec} || exit 1;
   fi
 
@@ -308,12 +309,13 @@ if [ $stage -le 6 ]; then
         $exp_dir/hybrid_tri3_$modspec/decode_$x
     
       steps/nnet2/decode.sh --cmd "$decode_cmd" \
+        --feat_type "raw" \
         --nj 20 \
         --num-threads 6 \
-        $exp_dir/tri3_${modspec}/graph \
+        $exp_dir/tri3_${mfcc}/graph \
         $data_dir/$x \
-        $exp_dir/hybrid_tri3_$modspec/decode_$x |\
-        tee $exp_dir/hybrid_tri3_$modspec/decode_$x/decode.log ;
+        $exp_dir/hybrid_tri3_${modspec}/decode_$x |\
+        tee $exp_dir/hybrid_tri3_${modspec}/decode_$x/decode.log ;
       ) & 
   done
   wait
