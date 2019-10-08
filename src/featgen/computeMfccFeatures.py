@@ -23,7 +23,7 @@ import subprocess
 import os
 
 
-def getKaldiArk(feat_dict, outfile, kaldi_cmd):
+def getKaldiArk(feat_dict, outfile, kaldi_cmd='copy-feats'):
     with open(outfile + '.txt', 'w+') as file:
         for key, feat in feat_dict.items():
             np.savetxt(file, feat, fmt='%.3f', header=key + ' [', footer=' ]', comments='')

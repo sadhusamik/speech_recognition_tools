@@ -1,18 +1,46 @@
-#!/export/b18/ssadhu/tools/python/bin/python3
-# -*- coding: utf-8 -*-
-"""
-Created on Thu Mar 15 14:49:37 2018
 
-@author: samiksadhu
 """
+Utility functions for feature computation
 
-'Some Functions for Feature Computation'
+Author: Samik Sadhu
+"""
 
 import numpy as np
 import scipy.linalg as lpc_solve
 import subprocess
 import os
 import sys
+from scipy.io.wavfile import read
+
+
+def get_kaldi_ark(feat_dict, outfile, kaldi_cmd='copy-feats'):
+    with open(outfile + '.txt', 'w+') as file:
+        for key, feat in feat_dict.items():
+            np.savetxt(file, feat, fmt='%.3f', header=key + ' [', footer=' ]', comments='')
+    cmd = kaldi_cmd + ' ark,t:' + outfile + '.txt' + ' ark,scp:' + outfile + '.ark,' + outfile + '.scp'
+    subprocess.run(cmd, shell=True)
+    os.remove(outfile + '.txt')
+
+def add_noise_to_wav(sig, noise, snr):
+    rand_num = int(np.floor(np.random.rand() * (len(noise) - len(sig))))
+    ns = noise[rand_num:rand_num + len(sig)]
+    E_s = np.mean(sig ** 2)
+    E_n = np.mean(ns ** 2)
+    alp = np.sqrt(E_s / (E_n * (10 ** (snr / 10))))
+
+    return sig + alp * ns
+
+def load_noise(noise_type):
+    noise_file = "noises/" + noise_type + ".wav"
+
+    if os.path.isfile(noise_file):
+
+        sr, noise = read(noise_file)
+    else:
+        print("Noise file " + noise_file + " not found!")
+        os.exit(1)
+
+    return noise / np.power(2, 15)
 
 
 def add_agwn(sig, noise, snr):
