@@ -15,18 +15,23 @@ export PATH=$PYSPEECH_TOOLS/hmm/:$PYSPEECH_TOOLS/gmm/:$PYSPEECH_TOOLS/utils:$PYS
 
 #source activate /export/b18/ssadhu/tools/python/envs/env_3.6/envs/env_2.7
 
-source activate /export/b18/ssadhu/tools/python/envs/env_3.6
+#source activate /export/b18/ssadhu/tools/python/envs/env_3.6
 
-PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/hmm
-PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/gmm
-PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/utils
-PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/utils_pytorch_kaldi
+# This is valid only for the CLSP grid at JHU, change to your own proper conda
+# environment for running pytorch
+source activate /export/b15/ssadhu/speech_recognition_tools/environment
+
+#PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/hmm
+#PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/gmm
+#PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/utils
+#PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/utils_pytorch_kaldi
 PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/featgen
-PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/nnet
-PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/rbm
-PYTHONPATH=$PYTHONPATH:$PYSPEECH_ROOT/tools/pytorch-kaldi
+PYTHONPATH=$PYTHONPATH:$PYSPEECH_ROOT/tools/Autoregressive-Predictive-Coding
+#PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/nnet
+#PYTHONPATH=$PYTHONPATH:$PYSPEECH_TOOLS/rbm
+#PYTHONPATH=$PYTHONPATH:$PYSPEECH_ROOT/tools/pytorch-kaldi
 PYTHONPATH=$PYTHONPATH:$PYSPEECH_ROOT/tools/kaldi-io-for-python
-PYTHONPATH=$PYTHONPATH:$PYSPEECH_ROOT/tools/gmm-torch
+#PYTHONPATH=$PYTHONPATH:$PYSPEECH_ROOT/tools/gmm-torch
 
 export PYTHONPATH=$PYTHONPATH
 
