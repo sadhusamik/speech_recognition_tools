@@ -6,8 +6,12 @@ from torch.autograd import Variable
 from nnet_models import nnetFeedforward
 import kaldi_io
 from features import dict2Ark
-
+import numpy as np
 import pickle
+
+
+def softmax(X):
+    return np.exp(X) / np.tile(np.sum(np.exp(X), axis=1)[:, None], (1, X.shape[1]))
 
 
 def get_args():
@@ -18,7 +22,7 @@ def get_args():
     parser.add_argument("egs_config", help="config file for generating examples")
     parser.add_argument("save_file", help="file to save posteriors")
     parser.add_argument("--layer", type=int, default=0, help="layer from the end to get the posteriors from")
-
+    parser.add_argument("--add_softmax", action="store_true", help="Add softmax to layer zero posteriors")
     return parser.parse_args()
 
 
@@ -54,9 +58,12 @@ def get_post(config, nnet):
     for utt_id, mat in kaldi_io.read_mat_ark(cmd):
         out = nnet(Variable(torch.FloatTensor(mat)))
         if config.layer == 0:
-            post_dict[utt_id] = out[1].data.numpy()
+            if config.add_softmax:
+                post_dict[utt_id] = softmax(out[1].data.numpy())
+            else:
+                post_dict[utt_id] = out[1].data.numpy()
         else:
-            post_dict[utt_id] = out[0][config.layer - 1].data.numpy()
+            post_dict[utt_id] = out[0][-config.layer].data.numpy()
 
     return post_dict
 

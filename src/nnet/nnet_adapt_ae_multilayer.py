@@ -27,6 +27,8 @@ def get_args():
     parser.add_argument("cmvns", help="All global cmvn files for output from different layers")
 
     # Other options
+    parser.add_argument("--override_trans_path", default=None,
+                        help="Override the feature transformation file used in egs config")
     parser.add_argument("--use_gpu", action="store_true", help="Set to use GPU, code will automatically detect GPU ID")
     parser.add_argument("--lr_factor", type=float, default=1, help="Factor to reduce learning rate by every epoch")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
@@ -144,7 +146,8 @@ def update(config):
     lr = config.learning_rate
     # Figure out all feature stuff
 
-    shell_cmd = "cat {:s} | shuf > temp".format(config.scp)
+    shuff_file = str(os.getpid()) + '.scp'
+    shell_cmd = "cat {:s} | shuf > {:s}".format(config.scp, shuff_file)
     r = subprocess.run(shell_cmd, shell=True, stdout=subprocess.PIPE)
 
     feats_config = pickle.load(open(config.egs_config, 'rb'))
@@ -153,12 +156,15 @@ def update(config):
         feat_type = feats_config['feat_type'].split(',')[0]
         trans_path = feats_config['feat_type'].split(',')[1]
 
+    if config.override_trans_path is not None:
+        trans_path = config.override_trans_path
+
     if feat_type == "pca":
-        cmd = "transform-feats {} scp:{} ark:- |".format(trans_path, 'temp')
+        cmd = "transform-feats {} scp:{} ark:- |".format(trans_path, shuff_file)
     elif feat_type == "cmvn":
-        cmd = "apply-cmvn {} scp:{} ark:- |".format(trans_path, 'temp')
+        cmd = "apply-cmvn {} scp:{} ark:- |".format(trans_path, shuff_file)
     else:
-        cmd = 'temp'
+        cmd = shuff_file
 
     if feats_config['concat_feats']:
         context = feats_config['concat_feats'].split(',')
@@ -278,9 +284,9 @@ def update(config):
 
             for idx in range(1, num_pm_models):
                 if config.use_gpu:
-                    post = out[0][idx] - Variable(torch.FloatTensor(means[idx])).cuda()
+                    post = out[0][-idx] - Variable(torch.FloatTensor(means[idx])).cuda()
                 else:
-                    post = out[0][idx] - Variable(torch.FloatTensor(means[idx]))
+                    post = out[0][-idx] - Variable(torch.FloatTensor(means[idx]))
                 post = F.pad(post, (0, 0, 0, config.max_seq_len - post.size(0)))
                 batch = batches[idx]
                 batch = torch.cat([batch, post[None, :, :]], 0)
@@ -297,11 +303,9 @@ def update(config):
                 _, indices = torch.sort(lens, descending=True)
 
                 if config.use_gpu:
-                    loss_all = torch.FloatTensor([0]).cuda()
+                    loss_all = torch.FloatTensor([1]).cuda()
                 else:
-                    loss_all = torch.FloatTensor([0])
-                lamb = 1
-                lamb2 = 0.5
+                    loss_all = torch.FloatTensor([1])
                 for idx in range(num_pm_models):
                     batch_x = batches[idx][indices]
                     ae_model = pm_models[idx]
@@ -312,22 +316,22 @@ def update(config):
                     else:
                         outputs = ae_model(batch_x[:, :-config.time_shift, :], batch_l - config.time_shift)
 
-                    optimizer.zero_grad()
-
                     if config.time_shift == 0:
                         loss = stable_mse(outputs, batch_x)
                     else:
                         loss = stable_mse(outputs, batch_x[:, config.time_shift:, :])
 
-                    loss_all += loss * lamb
-                    lamb = lamb * lamb2
+                    loss_all *= loss
+
                     tl = tr_losses[idx]
                     tl.append(loss.item())
                     tr_losses[idx] = tl
                     # if idx < num_pm_models - 1:
-                    # loss.backward(retain_graph=True)
+                    #    loss.backward(retain_graph=True)
                     # else:
-                    # loss.backward()
+                    #    loss.backward()
+
+                optimizer.zero_grad()
                 loss_all.backward()
                 optimizer.step()
 
@@ -373,8 +377,14 @@ def update(config):
 
         logging.info(print_log)
 
-        torch.save(ep_loss_dev, open(os.path.join(model_dir, "dev_epoch{:d}.loss".format(epoch + 1)), 'wb'))
-        torch.save(ep_fer_dev, open(os.path.join(model_dir, "dev_epoch{:d}.fer".format(epoch + 1)), 'wb'))
+        model_path = os.path.join(model_dir, config.experiment_name + '__epoch_%d' % (epoch + 1) + '.model')
+        torch.save({
+            'epoch': epoch + 1,
+            'ep_loss_dev': ep_loss_dev,
+            'ep_fer_dev': ep_fer_dev,
+            'tr_losses': tr_losses,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
 
         # Change learning rate to half
         optimizer, lr = adjust_learning_rate(optimizer, lr, config.lr_factor)
