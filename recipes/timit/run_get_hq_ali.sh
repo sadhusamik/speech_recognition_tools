@@ -22,7 +22,7 @@ feats_nj=10
 train_nj=30
 decode_nj=10
 stage=5
-train=false
+train=true
 decode=false
 
 if [ $stage -le 0 ]; then 
@@ -68,6 +68,13 @@ if [ $stage -le 2 ]; then
     steps/decode.sh --nj "$decode_nj" --cmd "$decode_cmd" \
      exp/mono/graph data/test exp/mono/decode_test
   fi
+  
+  # Get monophone alignment
+  for x in train test dev ; do  
+    steps/align_si.sh --boost-silence 1.25 --nj "$train_nj" --cmd "$train_cmd" \
+     data/$x data/lang exp/mono exp/mono_ali_${x}
+
+  done
 fi
 echo ============================================================================
 echo "           tri1 : Deltas + Delta-Deltas Training & Decoding               "
@@ -129,7 +136,7 @@ if [ $stage -le 5 ]; then
     steps/train_sat.sh --cmd "$train_cmd" \
      $numLeavesSAT $numGaussSAT data/train data/lang exp/tri2_ali exp/tri3
   fi
-#  decode=true
+  decode=true
   if $decode; then
     utils/mkgraph.sh data/lang_test_bg exp/tri3 exp/tri3/graph
 
@@ -146,40 +153,3 @@ if [ $stage -le 5 ]; then
      data/$x data/lang exp/tri3 exp/tri3_ali_${x}
   done
 fi
-
-
-exit
-echo ============================================================================
-echo "                        SGMM2 Training & Decoding                         "
-echo ============================================================================
-if [ $stage -le 6 ]; then
-  if $train; then
-    steps/align_fmllr.sh --nj "$train_nj" --cmd "$train_cmd" \
-     data/train data/lang exp/tri3 exp/tri3_ali
-
-    steps/train_ubm.sh --cmd "$train_cmd" \
-     $numGaussUBM data/train data/lang exp/tri3_ali exp/ubm4
-
-    steps/train_sgmm2.sh --cmd "$train_cmd" $numLeavesSGMM $numGaussSGMM \
-     data/train data/lang exp/tri3_ali exp/ubm4/final.ubm exp/sgmm2_4
-  fi
- # decode=true
-  if $decode; then
-    utils/mkgraph.sh data/lang_test_bg exp/sgmm2_4 exp/sgmm2_4/graph
-
-    steps/decode_sgmm2.sh --nj "$decode_nj" --cmd "$decode_cmd"\
-     --transform-dir exp/tri3/decode_dev exp/sgmm2_4/graph data/dev \
-     exp/sgmm2_4/decode_dev
-
-    steps/decode_sgmm2.sh --nj "$decode_nj" --cmd "$decode_cmd"\
-     --transform-dir exp/tri3/decode_test exp/sgmm2_4/graph data/test \
-     exp/sgmm2_4/decode_test
-  fi
-  # Finally get all the alignments 
-  for x in train test dev ; do
-    steps/align_sgmm2.sh --nj 20 --cmd "$train_cmd" \
-     --transform-dir exp/tri3_ali --use-graphs true --use-gselect true \
-     data/$x data/lang exp/sgmm2_4 exp/sgmm2_4_ali_${x}
-  done
-fi
-
