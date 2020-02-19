@@ -53,7 +53,7 @@ if [ -f $segment ]; then
 
   $cmd --mem 5G JOB=1:$nj \
     $log_dir/feats_${name}.JOB.log \
-    computeMfccFeatures.py \
+    python $PYSPEECH_TOOLS/featgen/computeMfccFeatures.py \
       $log_dir/wav_${name}.JOB.scp \
       $feat_dir/mfcc_${name}.JOB \
       $add_opts \
@@ -87,7 +87,7 @@ fi
 
 $cmd --mem 5G JOB=1:$nj \
   $log_dir/feats_${name}.JOB.log \
-  computeMfccFeatures.py \
+  python $PYSPEECH_TOOLS/featgen/computeMfccFeatures.py \
     $log_dir/wav_${name}.JOB.scp \
     $feat_dir/mfcc_${name}.JOB \
     $add_opts \
