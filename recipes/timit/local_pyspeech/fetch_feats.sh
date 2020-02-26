@@ -42,8 +42,12 @@ if $cmvn; then
     kaldi)  cmvn_dir=mfcc ;;
     pyspeech) cmvn_dir=$data_dir/$feat_type/cmvn;;
   esac
-
-  cp $cmvn_dir/cmvn_$name.scp $data_dir/cmvn.scp || exit 1;
+  
+  if [ -f $cmvn_dir/cmvn_$name.scp ]; then
+    cp $cmvn_dir/cmvn_$name.scp $data_dir/cmvn.scp || exit 1;
+  else
+    echo "$0: Cant find cmvn skipping.."
+  fi
 fi
 
 echo $0": Compiled all the precomputed $feat_type features from $data_dir !"

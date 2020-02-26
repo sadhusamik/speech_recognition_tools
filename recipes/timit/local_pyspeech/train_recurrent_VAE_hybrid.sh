@@ -29,7 +29,7 @@ num_classes=38
 model_save_interval=10
 ce_weight_init=1
 enc_dropout=0.2
-weight_decay=0
+weight_decay=0.001
 
 # Feature config
 feature_dim=13
@@ -43,6 +43,8 @@ ali_type="phone"
 
 mkdir -p $hybrid_dir 
 log_dir=$hybrid_dir/log
+
+echo "$0: nn_name=$nn_name"
 
 if [ $stage -le 0 ]; then 
   for x in $train_set $dev_set ; do 
@@ -71,7 +73,7 @@ if [ $stage -le 1 ]; then
   if $use_gpu; then 
     $cuda_cmd --mem 5G \
       $hybrid_dir/log/train_feedgen_${nn_name}.log \
-      python3 $nnet_src/train_feedforward_generative_model.py \
+      python3 $nnet_src/train_rnn_VAE_classifier.py \
       --use_gpu \
       --train_set=$train_set \
       --dev_set=$dev_set \
@@ -95,7 +97,7 @@ if [ $stage -le 1 ]; then
 
     queue.pl --mem 5G \
       $hybrid_dir/log/train_feedgen_${nn_name}.log \
-      python3 $nnet_src/train_feedforward_generative_model.py \
+      python3 $nnet_src/train_rnn_VAE_classifier.py \
       --train_set=$train_set \
       --dev_set=$dev_set \
       --encoder_num_layers=$encoder_num_layers \

@@ -18,23 +18,21 @@ nn_name=nnet_gru_3lenc_1lclas_1lae_256nodes
 num_egs_jobs=2
 
 # Neural network config
-encoder_num_layers=3
-classifier_num_layers=1
-ae_num_layers=1
-hidden_dim=256
-bn_dim=30
+num_layers_subband=1
+num_layers=1
+mod_num=3
+hidden_dim_subband=100
 batch_size=64
 epochs=300
 num_classes=38
 model_save_interval=10
-ce_weight_init=1
-enc_dropout=0.2
+dropout=0
 weight_decay=0
 
 # Feature config
 feature_dim=13
-left_context=4
-right_context=4
+left_context=0
+right_context=0
 max_seq_len=512
 ali_type="phone"
 
@@ -44,46 +42,51 @@ ali_type="phone"
 mkdir -p $hybrid_dir 
 log_dir=$hybrid_dir/log
 
-if [ $stage -le 0 ]; then 
-  for x in $train_set $dev_set ; do 
-    local_pyspeech/fetch_feats.sh $data_dir/$x $feat_type || exit 1;
+if [ $stage -le 0 ]; then
+  for f in $feat_types; do 
+    for x in $train_set $dev_set ; do 
+      local_pyspeech/generate_feats_scp.sh $data_dir/$x $f || exit 1;
+    done
+  done
+  
+  for f in $feat_types; do
+    cmvn_path=$hybrid_dir/global_cmvn_$f
+    compute-cmvn-stats scp:$data_dir/$train_set/$f/feats.scp $cmvn_path  || exit 1;
   done
 
-  cmvn_path=$hybrid_dir/global_cmvn
-  compute-cmvn-stats scp:$data_dir/$train_set/feats.scp $cmvn_path  || exit 1;
-
   for x in $train_set $dev_set ; do
-    egs_dir=$hybrid_dir/egs/$x
-    mkdir -p $egs_dir
-    python3 $nnet_src/data_prep_for_seq.py \
-      --num_jobs=$num_egs_jobs \
-      --feat_type=cmvn,$cmvn_path \
-      --ali_type=$ali_type \
-      --max_seq_len=$max_seq_len \
-      --concat_feats=${left_context},${right_context} \
-      $data_dir/$x/feats.scp \
-      ${hmm_dir}_ali_${x} \
-      $egs_dir || exit 1;
+    for f in $feat_types; do
+      cmvn_path=$hybrid_dir/global_cmvn_$f
+      egs_dir=$hybrid_dir/egs/${x}/${f}
+      mkdir -p $egs_dir
+      python3 $nnet_src/data_prep_for_seq.py \
+        --num_jobs=$num_egs_jobs \
+        --feat_type=cmvn,$cmvn_path \
+        --ali_type=$ali_type \
+        --max_seq_len=$max_seq_len \
+        --concat_feats=${left_context},${right_context} \
+        $data_dir/$x/$f/feats.scp \
+        ${hmm_dir}_ali_${x} \
+        $egs_dir || exit 1;
+    done
   done
 fi
 
 if [ $stage -le 1 ]; then 
   if $use_gpu; then 
     $cuda_cmd --mem 5G \
-      $hybrid_dir/log/train_feedgen_${nn_name}.log \
-      python3 $nnet_src/train_feedforward_generative_model.py \
+      $hybrid_dir/log/train_multimod_${nn_name}.log \
+      python3 $nnet_src/train_multimodnet_nnet.py \
       --use_gpu \
       --train_set=$train_set \
       --dev_set=$dev_set \
-      --encoder_num_layers=$encoder_num_layers \
-      --classifier_num_layer=$classifier_num_layers \
-      --ae_num_layers=$ae_num_layers \
-      --hidden_dim=$hidden_dim \
-      --bn_dim=$bn_dim \
+      --num_layers_subband=$num_layers_subband \
+      --hidden_dim_subband=$hidden_dim_subband \
+      --num_layers=$num_layers \
+      --mod_num=$mod_num \
       --batch_size=$batch_size \
       --epochs=$epochs \
-      --ce_weight_init=$ce_weight_init \
-      --enc_dropout=$enc_dropout \
+      --dropout=$dropout \
       --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
       --num_classes=$num_classes \
@@ -94,19 +97,17 @@ if [ $stage -le 1 ]; then
   else
 
     queue.pl --mem 5G \
-      $hybrid_dir/log/train_feedgen_${nn_name}.log \
-      python3 $nnet_src/train_feedforward_generative_model.py \
+      $hybrid_dir/log/train_multimod_${nn_name}.log \
+      python3 $nnet_src/train_multimod_nnet.py \
       --train_set=$train_set \
       --dev_set=$dev_set \
-      --encoder_num_layers=$encoder_num_layers \
-      --classifier_num_layer=$classifier_num_layers \
-      --ae_num_layers=$ae_num_layers \
-      --hidden_dim=$hidden_dim \
-      --bn_dim=$bn_dim \
+      --num_layers_subband=$num_layers_subband \
+      --hidden_dim_subband=$hidden_dim_subband \
+      --num_layers=$num_layers \
+      --mod_num=$mod_num \
       --batch_size=$batch_size \
       --epochs=$epochs \
-      --ce_weight_init=$ce_weight_init \
-      --enc_dropout=$enc_dropout \
+      --dropout=$dropout \
       --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
       --num_classes=$num_classes \

@@ -5,7 +5,7 @@
 
 stage=0
 nj=10
-hybrid_dir=exp/hybrid_generative_pytorch
+hybrid_dir=exp/hybrid_rnn_pytorch
 data_dir=data
 lang_dir=lang_test_bg
 feat_type=mfcc
@@ -14,22 +14,16 @@ use_gpu=true
 train_set=train
 dev_set=dev
 test_set=test
-nn_name=nnet_gru_3lenc_1lclas_1lae_256nodes
+nn_name=nnet_gru_4ly_256nodes
 num_egs_jobs=2
 
 # Neural network config
-encoder_num_layers=3
-classifier_num_layers=1
-ae_num_layers=1
+num_layers=4
 hidden_dim=256
-bn_dim=30
 batch_size=64
 epochs=300
 num_classes=38
 model_save_interval=10
-ce_weight_init=1
-enc_dropout=0.2
-weight_decay=0
 
 # Feature config
 feature_dim=13
@@ -70,21 +64,15 @@ fi
 if [ $stage -le 1 ]; then 
   if $use_gpu; then 
     $cuda_cmd --mem 5G \
-      $hybrid_dir/log/train_feedgen_${nn_name}.log \
-      python3 $nnet_src/train_feedforward_generative_model.py \
+      $hybrid_dir/log/train_rnn.log \
+      python3 $nnet_src/train_rnn_nnet_classifier.py \
       --use_gpu \
       --train_set=$train_set \
       --dev_set=$dev_set \
-      --encoder_num_layers=$encoder_num_layers \
-      --classifier_num_layer=$classifier_num_layers \
-      --ae_num_layers=$ae_num_layers \
+      --num_layers=$num_layers \
       --hidden_dim=$hidden_dim \
-      --bn_dim=$bn_dim \
       --batch_size=$batch_size \
       --epochs=$epochs \
-      --ce_weight_init=$ce_weight_init \
-      --enc_dropout=$enc_dropout \
-      --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
       --num_classes=$num_classes \
       --model_save_interval=$model_save_interval \
@@ -94,7 +82,7 @@ if [ $stage -le 1 ]; then
   else
 
     queue.pl --mem 5G \
-      $hybrid_dir/log/train_feedgen_${nn_name}.log \
+      $hybrid_dir/log/train_feedgen.log \
       python3 $nnet_src/train_feedforward_generative_model.py \
       --train_set=$train_set \
       --dev_set=$dev_set \
@@ -105,9 +93,6 @@ if [ $stage -le 1 ]; then
       --bn_dim=$bn_dim \
       --batch_size=$batch_size \
       --epochs=$epochs \
-      --ce_weight_init=$ce_weight_init \
-      --enc_dropout=$enc_dropout \
-      --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
       --num_classes=$num_classes \
       --model_save_interval=$model_save_interval \

@@ -52,7 +52,7 @@ if [ -f $segment ]; then
 
   $cmd --mem 5G JOB=1:$nj \
     $log_dir/feats_${name}.JOB.log \
-    computeModulationSpectrum_segments.py \
+    python3 ../../src/featgen/computeModulationSpectrum_segments.py \
       $scp \
       $log_dir/segments.JOB \
       $feat_dir/modspec_${name}.JOB \
@@ -87,7 +87,7 @@ elif [ -f $scp ]; then
 
   $cmd --mem 5G JOB=1:$nj \
     $log_dir/feats_${name}.JOB.log \
-      computeModulationSpectrum.py \
+      python3 ../../src/featgen/computeModulationSpectrum.py \
       $log_dir/wav_${name}.JOB.scp \
       $feat_dir/modspec_${name}.JOB \
       $add_opts \

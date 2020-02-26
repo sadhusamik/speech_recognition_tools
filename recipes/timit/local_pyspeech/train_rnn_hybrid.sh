@@ -18,17 +18,13 @@ nn_name=nnet_gru_3lenc_1lclas_1lae_256nodes
 num_egs_jobs=2
 
 # Neural network config
-encoder_num_layers=3
-classifier_num_layers=1
-ae_num_layers=1
+num_layers=3
 hidden_dim=256
-bn_dim=30
 batch_size=64
 epochs=300
 num_classes=38
 model_save_interval=10
-ce_weight_init=1
-enc_dropout=0.2
+dropout=0
 weight_decay=0
 
 # Feature config
@@ -43,6 +39,8 @@ ali_type="phone"
 
 mkdir -p $hybrid_dir 
 log_dir=$hybrid_dir/log
+
+echo "$0: nn_name=$nn_name"
 
 if [ $stage -le 0 ]; then 
   for x in $train_set $dev_set ; do 
@@ -71,19 +69,15 @@ if [ $stage -le 1 ]; then
   if $use_gpu; then 
     $cuda_cmd --mem 5G \
       $hybrid_dir/log/train_feedgen_${nn_name}.log \
-      python3 $nnet_src/train_feedforward_generative_model.py \
+      python3 $nnet_src/train_rnn_nnet_classifier.py \
       --use_gpu \
       --train_set=$train_set \
       --dev_set=$dev_set \
-      --encoder_num_layers=$encoder_num_layers \
-      --classifier_num_layer=$classifier_num_layers \
-      --ae_num_layers=$ae_num_layers \
+      --num_layers=$num_layers \
       --hidden_dim=$hidden_dim \
-      --bn_dim=$bn_dim \
       --batch_size=$batch_size \
       --epochs=$epochs \
-      --ce_weight_init=$ce_weight_init \
-      --enc_dropout=$enc_dropout \
+      --dropout=$dropout \
       --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
       --num_classes=$num_classes \
@@ -95,18 +89,14 @@ if [ $stage -le 1 ]; then
 
     queue.pl --mem 5G \
       $hybrid_dir/log/train_feedgen_${nn_name}.log \
-      python3 $nnet_src/train_feedforward_generative_model.py \
+      python3 $nnet_src/train_rnn_nnet_classifier.py \
       --train_set=$train_set \
       --dev_set=$dev_set \
-      --encoder_num_layers=$encoder_num_layers \
-      --classifier_num_layer=$classifier_num_layers \
-      --ae_num_layers=$ae_num_layers \
+      --num_layers=$num_layers \
       --hidden_dim=$hidden_dim \
-      --bn_dim=$bn_dim \
       --batch_size=$batch_size \
       --epochs=$epochs \
-      --ce_weight_init=$ce_weight_init \
-      --enc_dropout=$enc_dropout \
+      --dropout=$dropout \
       --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
       --num_classes=$num_classes \
