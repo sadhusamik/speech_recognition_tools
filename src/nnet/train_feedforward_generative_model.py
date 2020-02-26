@@ -37,7 +37,7 @@ def pad2list(padded_seq, lengths):
 
 def get_args():
     parser = argparse.ArgumentParser(
-        description="Train Feedforward Acoustic Model and an Autoencoder with multitask training")
+        description="Train Multi-task Feedforward Acoustic Model with VAE")
 
     parser.add_argument("egs_dir", type=str, help="Path to the preprocessed data")
     parser.add_argument("store_path", type=str, help="Where to save the trained models and logs")
@@ -52,11 +52,15 @@ def get_args():
     parser.add_argument("--optimizer", default="adam", type=str,
                         help="The gradient descent optimizer (e.g., sgd, adam, etc.)")
     parser.add_argument("--batch_size", default=64, type=int, help="Training minibatch size")
-    parser.add_argument("--learning_rate", default=0.0001, type=float, help="Initial learning rate")
+    parser.add_argument("--learning_rate", default=0.001, type=float, help="Initial learning rate")
     parser.add_argument("--epochs", default=100, type=int, help="Number of training epochs")
     parser.add_argument("--train_set", default="train_si284", help="Name of the training datatset")
     parser.add_argument("--dev_set", default="test_dev93", help="Name of development dataset")
-    parser.add_argument("--ae_loss", default="MSE", help="Loss function L1/MSE")
+    parser.add_argument("--clip_thresh", type=float, default=1, help="Gradient clipping threshold")
+    parser.add_argument("--ce_weight_init", type=float, default=1, help="Initial Cross-entropy weight")
+    parser.add_argument("--lrr", type=float, default=0.9, help="Learning rate reduction rate")
+    parser.add_argument("--enc_dropout", type=float, default=0.2, help="Encoder dropout rate")
+    parser.add_argument("--weight_decay", type=float, default=0.02, help="L2 Regularization weight")
 
     # Misc configurations
     parser.add_argument("--num_classes", type=int, default=42,
@@ -105,31 +109,35 @@ def run(config):
     logging.info('Optimizer: %s ' % (config.optimizer))
     logging.info('Batch Size: %d ' % (config.batch_size))
     logging.info('Initial Learning Rate: %f ' % (config.learning_rate))
+    logging.info('Encoder Dropout: %f ' % (config.enc_dropout))
+    logging.info('Learning rate reduction rate: %f ' % (config.lrr))
+    logging.info('Weight decay: %f ' % (config.weight_decay))
     sys.stdout.flush()
 
     model = nnetAEClassifierMultitask(config.feature_dim * num_frames, config.num_classes, config.encoder_num_layers,
                                       config.classifier_num_layers, config.ae_num_layers,
-                                      config.hidden_dim, config.bn_dim)
+                                      config.hidden_dim, config.bn_dim, config.enc_dropout)
     if config.use_gpu:
         # Set environment variable for GPU ID
         id = get_device_id()
         os.environ["CUDA_VISIBLE_DEVICES"] = id
 
         model = model.cuda()
-
+    lr = config.learning_rate
     criterion_classifier = nn.CrossEntropyLoss()
     criterion_ae = nn.MSELoss()
+    ce_weight = config.ce_weight_init
 
     if config.optimizer == 'adam':
-        optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
+        optimizer = optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     elif config.optimizer == 'adadelta':
-        optimizer = optim.Adadelta(model.parameters())
+        optimizer = optim.Adadelta(model.parameters(), weight_decay=config.weight_decay)
     elif config.optimizer == 'sgd':
-        optimizer = optim.SGD(model.parameters(), lr=config.learning_rate)
+        optimizer = optim.SGD(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     elif config.optimizer == 'adagrad':
-        optimizer = optim.Adagrad(model.parameters(), lr=config.learning_rate)
+        optimizer = optim.Adagrad(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     elif config.optimizer == 'rmsprop':
-        optimizer = optim.RMSprop(model.parameters(), lr=config.learning_rate)
+        optimizer = optim.RMSprop(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     else:
         raise NotImplementedError("Learning method not supported for the task")
 
@@ -191,7 +199,7 @@ def run(config):
 
             loss_classifier = criterion_classifier(class_out, lab)
             loss_ae = criterion_ae(ae_out, batch_x)
-            loss = loss_classifier + loss_ae
+            loss = ce_weight * loss_classifier + loss_ae
 
             train_losses.append(loss_classifier.item())
             train_ae_losses.append(loss_ae.item())
@@ -201,7 +209,19 @@ def run(config):
                 tr_fer.append(compute_fer(class_out.data.numpy(), lab.data.numpy()))
 
             loss.backward()
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip_thresh)
             optimizer.step()
+
+        # Adjust learning rate
+        if not (epoch_i + 1) % 10:
+            logging.info("Changing learning rate from {:.6f} to {:.6f}".format(lr, config.lrr * lr))
+            lr = config.lrr * lr
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+
+        if not (epoch_i + 1) % 10:
+            logging.info("Changing CE weight from {:.6f} to {:.6f}".format(ce_weight, 0.5 * ce_weight))
+            ce_weight = 0.95 * ce_weight
 
         ep_loss_tr.append(np.mean(train_losses))
         ep_fer_tr.append(np.mean(tr_fer))
@@ -254,7 +274,9 @@ def run(config):
             ep_fer_dev.append(np.mean(val_fer))
             ep_ae_dev.append(np.mean(val_ae_losses))
 
-        print_log = "Epoch: {:d} Tr loss: {:.3f} :: Tr FER: {:.2f}".format(epoch_i + 1, ep_loss_tr[-1], ep_fer_tr[-1])
+        print_log = "Epoch: {:d} ((lr={:.6f})) Tr loss: {:.3f} :: Tr FER: {:.2f}".format(epoch_i + 1,
+                                                                                         lr,
+                                                                                         ep_loss_tr[-1], ep_fer_tr[-1])
         print_log += " || Val : {:.3f} :: Val FER: {:.2f}".format(ep_loss_dev[-1], ep_fer_dev[-1])
         print_log += " || AE Loss (Train) : {:.3f} :: AE Loss (Dev) : {:.3f} ".format(ep_ae_tr[-1], ep_ae_dev[-1])
         logging.info(print_log)
@@ -271,6 +293,7 @@ def run(config):
                 'ae_num_layers': config.ae_num_layers,
                 'hidden_dim': config.hidden_dim,
                 'bn_dim': config.bn_dim,
+                'enc_dropout': config.enc_dropout,
                 'ep_loss_tr': ep_loss_tr,
                 'ep_loss_dev': ep_loss_dev,
                 'model_state_dict': model.state_dict(),

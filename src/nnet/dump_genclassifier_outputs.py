@@ -3,11 +3,12 @@ import logging
 import argparse
 import torch
 from torch.autograd import Variable
-from nnet_models import nnetAEClassifierMultitask
+from nnet_models import nnetAEClassifierMultitask, nnetVAEClassifier, nnetRNN
 import kaldi_io
 from features import dict2Ark
 import numpy as np
 import pickle
+import sys
 
 
 def softmax(X):
@@ -21,6 +22,7 @@ def get_args():
     parser.add_argument("scp", help="scp files for features")
     parser.add_argument("egs_config", help="config file for generating examples")
     parser.add_argument("save_file", help="file to save posteriors")
+    parser.add_argument("--ae_type", default="normal", help="Type of autoencoder vae/normal/noae")
     parser.add_argument("--prior", default=None, help="Provide prior to normalize and get likelihoods")
     parser.add_argument("--prior_weight", type=float, default=0.8, help="Weight for the prior distribution")
     parser.add_argument("--add_softmax", action="store_true", help="Set to add softmax when dumping posteriors")
@@ -31,10 +33,27 @@ def get_args():
 def get_output(config):
     # Load model
     nnet = torch.load(config.model, map_location=lambda storage, loc: storage)
-    model = nnetAEClassifierMultitask(nnet['feature_dim'] * nnet['num_frames'], nnet['num_classes'],
-                                      nnet['encoder_num_layers'], nnet['classifier_num_layers'], nnet['ae_num_layers'],
-                                      nnet['hidden_dim'],
-                                      nnet['bn_dim'])
+    if config.ae_type == "normal":
+        model = nnetAEClassifierMultitask(nnet['feature_dim'] * nnet['num_frames'], nnet['num_classes'],
+                                          nnet['encoder_num_layers'], nnet['classifier_num_layers'],
+                                          nnet['ae_num_layers'],
+                                          nnet['hidden_dim'],
+                                          nnet['bn_dim'], nnet['enc_dropout'])
+    elif config.ae_type == "vae":
+        model = nnetVAEClassifier(nnet['feature_dim'] * nnet['num_frames'], nnet['num_classes'],
+                                  nnet['encoder_num_layers'], nnet['classifier_num_layers'],
+                                  nnet['ae_num_layers'],
+                                  nnet['hidden_dim'],
+                                  nnet['bn_dim'], nnet['enc_dropout'], use_gpu=False)
+    elif config.ae_type == "noae":
+        model = nnetRNN(nnet['feature_dim'] * nnet['num_frames'],
+                        nnet['num_layers'],
+                        nnet['hidden_dim'],
+                        nnet['num_classes'], nnet['dropout'])
+    else:
+        print("Model type {} not supported!".format(config.ae_type))
+        sys.exit(1)
+
     model.load_state_dict(nnet['model_state_dict'])
     feats_config = pickle.load(open(config.egs_config, 'rb'))
 
@@ -62,10 +81,16 @@ def get_output(config):
         prior = pickle.load(open(config.prior, 'rb'))
 
     post_dict = {}
+    model.eval()
     for utt_id, mat in kaldi_io.read_mat_ark(cmd):
         mat = Variable(torch.FloatTensor(mat))[None, :, :]
         batch_l = Variable(torch.IntTensor([mat.size(1)]))
-        out, _ = model(mat, batch_l)
+        if config.ae_type == "normal":
+            out, _ = model(mat, batch_l)
+        elif config.ae_type == "vae":
+            out, _, _ = model(mat, batch_l)
+        elif config.ae_type == "noae":
+            out = model(mat, batch_l)
 
         if config.prior:
             post_dict[utt_id] = lsm(out[0, :, :]).data.numpy() - config.prior_weight * prior

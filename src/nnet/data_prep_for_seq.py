@@ -23,7 +23,7 @@ def get_config():
     parser.add_argument("--num_jobs", type=int, default=5, help="Number of parallel jobs to run")
     parser.add_argument("--notruncpad", action="store_true", help="Set to not truncate or pad the features")
     parser.add_argument("--feat_type", type=str, default=None,
-                        help="feat_type(cmvn/pca),path_to_cmvn or pca mat, set as None for raw features")
+                        help="feat_type(cmvn/cmvn_utt/pca),path_to_cmvn or pca mat, set as None for raw features")
     parser.add_argument("--concat_feats", default=None, help="Put left and right context as left,right")
     parser.add_argument("--ali_type", default="phone", help="phone/pdf to get phone or pdf alignment labels")
     parser.add_argument("--max_seq_len", default=512, type=int,
@@ -97,6 +97,8 @@ def dump_uttwise_feats(scp, config):
         cmd = "transform-feats {} scp:{} ark:- |".format(trans_path, scp)
     elif feat_type == "cmvn":
         cmd = "apply-cmvn {} scp:{} ark:- |".format(trans_path, scp)
+    elif feat_type == "cmvn_utt":
+        cmd = "apply-cmvn scp:{} scp:{} ark:- |".format(trans_path, scp)
     else:
         cmd = scp
 
