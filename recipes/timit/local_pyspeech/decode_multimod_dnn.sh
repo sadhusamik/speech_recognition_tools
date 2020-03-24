@@ -9,7 +9,7 @@ hybrid_dir=exp/hybrid_generative_pytorch
 data_dir=data
 lang_dir=data/lang_test_bg
 graph_name=graph
-feat_type=mfcc
+feat_types="modspec_20_1_15_0.5_15 modspec_20_1_15_0.5_25 modspec_20_1_15_0.5_35"
 hmm_dir=exp/tri3
 test_set=test
 train_set=train
@@ -22,39 +22,38 @@ append=
 score_script=score.sh
 override_cmvn=
 override_model=
-compute_cmvn=false
-override_prior=
-ae_type=normal
+
 # Decoder parameters
 min_active=200
 max_active=700
 beam=8
 lattice_beam=13
 acwt=0.2
-remove_ll=true # Remove loglikelihood directory after decoding 
 
 . utils/parse_options.sh 
 
 thread_string=
 [ $num_threads -gt 1 ] && thread_string="-parallel --num-threads=$num_threads"
 
-ll_dir=$hybrid_dir/loglikelihoods_${test_set}_${feat_type}_${append}
-decode_dir=$hybrid_dir/decode_${test_set}_${feat_type}_${append}
+ll_dir=$hybrid_dir/loglikelihoods_${test_set}_multimod_${append}
+decode_dir=$hybrid_dir/decode_${test_set}_multimod_${append}
 mkdir -p $ll_dir
 mkdir -p $hybrid_dir
 log_dir=$hybrid_dir/log
 mkdir -p $log_dir
 mkdir -p $decode_dir
 
-
+FS=', ' read -r -a array <<< $feat_types
 if [ $stage -le 0 ]; then 
   echo "$0: Compute Log-likelihood"
-
-  split_scp=""
-  for n in `seq $nj`; do 
-    split_scp="$split_scp $log_dir/${test_set}.$n.scp"
+  
+  for feat_type in $feat_types; do
+    split_scp=""
+    for n in `seq $nj`; do 
+      split_scp="$split_scp $log_dir/${test_set}_${feat_type}.$n.scp"
+    done
+    utils/split_scp.pl $data_dir/$test_set/${feat_type}/feats.scp $split_scp || exit 1;
   done
-  utils/split_scp.pl $data_dir/$test_set/feats.scp $split_scp || exit 1;
 
   if [ -z $model_iter ] ; then
     echo "$0: Choosing best model"
@@ -69,41 +68,22 @@ if [ $stage -le 0 ]; then
     model=$override_model
     echo "$0: Overriding with model $model"
   fi
-  
-  if $compute_cmvn; then 
-    echo "$0: Computing fresh CMVN on test set $test_set"
-    cmvn_type=cmvn_utt
-    cmvn_path=`realpath $hybrid_dir/perutt_cmvn_${test_set}_${feat_type}`
-    compute-cmvn-stats \
-      scp:$data_dir/$test_set/feats.scp \
-      ark,scp:$cmvn_path.ark,$cmvn_path.scp  || exit 1;
-    add_opts="--override_trans=$cmvn_type,$cmvn_path.scp"
+
+  if [ -z $override_cmvn ]; then 
+    add_opts=""
   else
-    if [ -z $override_cmvn ]; then 
-      add_opts=""
-    else
-      echo "$0: Overriding cmvn with given file"
-      add_opts="--override_trans=$override_cmvn"
-    fi
+    echo "$0: Overriding cmvn with given file"
+    add_opts="--override_trans=$override_cmvn"
   fi
 
-  if [ ! -z $override_prior ]; then 
-    echo "$0: Overriding prior with given file"
-    prior_file=$override_prior
-  else
-    echo "$0: Using prior from $hybrid_dir"
-    prior_file=$hybrid_dir/priors
-  fi
-
-  queue.pl --mem 10G JOB=1:$nj \
-    $log_dir/compute_llikelihood_${test_set}.JOB.log \
-    python3 $nnet_src/dump_genclassifier_outputs.py $add_opts \
-    --ae_type=$ae_type \
-    --prior=$prior_file \
+  queue.pl JOB=1:$nj \
+    $log_dir/compute_llikelihood.JOB.log \
+    python3 $nnet_src/dump_multimod_outputs.py $add_opts \
+    --prior=$hybrid_dir/priors \
     --prior_weight=$pw \
     $model \
-    $log_dir/${test_set}.JOB.scp \
-    $hybrid_dir/egs/${train_set}/egs.config \
+    $log_dir/${test_set}_${array[0]}.JOB.scp,$log_dir/${test_set}_${array[1]}.JOB.scp,$log_dir/${test_set}_${array[2]}.JOB.scp \
+    $hybrid_dir/egs/$train_set/${array[0]}/egs.config,$hybrid_dir/egs/$train_set/${array[1]}/egs.config,$hybrid_dir/egs/$train_set/${array[2]}/egs.config\
     $ll_dir/$test_set.JOB.ll || exit 1;
    
   for n in `seq $nj`; do
@@ -123,7 +103,7 @@ if [ $stage -le 1 ]; then
   utils/split_scp.pl $ll_dir/all_llhoods $split_scp || exit 1;
 
   queue.pl --mem 2G --num-threads $num_threads JOB=1:$nj \
-    $log_dir/decode_${test_set}.JOB.log \
+    $log_dir/decode_${teste_set}.JOB.log \
     latgen-faster-mapped$thread_string --min-active=$min_active \
     --max-active=$max_active \
     --beam=$beam \
@@ -149,9 +129,4 @@ if [ $stage -le 2 ]; then
     $data_dir/$test_set \
     $hmm_dir/$graph_name \
     $decode_dir || exit 1;
-fi
-
-if $remove_ll; then
-  echo "$0: Removing all files from log-likelihood directory"
-  rm -r $ll_dir
 fi

@@ -13,6 +13,7 @@ frate=100
 cmd=queue.pl
 add_opts=
 src_dir='../../src'
+spectrum_type=log
 
 . parse_options.sh || exit 1;
 
@@ -59,6 +60,7 @@ if [ -f $segment ]; then
       $log_dir/wav_${name}.JOB.scp \
       $feat_dir/mfcc_${name}.JOB \
       $add_opts \
+      --spectrum_type=$spectrum_type \
       --nfilters=$nfilters \
       --nfft=$nfft \
       --fduration=$fduration \
@@ -94,6 +96,7 @@ elif [ -f $scp ]; then
         $log_dir/wav_${name}.JOB.scp \
         $feat_dir/melspec_${name}.JOB \
         $add_opts \
+        --spectrum_type=$spectrum_type \
         --nfilters=$nfilters \
         --nfft=$nfft \
         --fduration=$fduration \

@@ -20,7 +20,7 @@ mkdir -p $cmvn_dir $log_dir
 if $per_utt; then 
 
 ! compute-cmvn-stats \
-  scp:$data_dir/feats.scp \
+  scp,p:$data_dir/feats.scp \
   ark,scp:$cmvn_dir/cmvn_$name.ark,$cmvn_dir/cmvn_$name.scp \
   2> $log_dir/cmvn_$name.log \
   && echo "Error computing CMVN stats. See $log_dir/cmvn_$name.log" \
@@ -30,7 +30,7 @@ else
 
 ! compute-cmvn-stats \
   --spk2utt=ark:$data_dir/spk2utt \
-  scp:$data_dir/feats.scp \
+  scp,p:$data_dir/feats.scp \
   ark,scp:$cmvn_dir/cmvn_$name.ark,$cmvn_dir/cmvn_$name.scp \
   2> $log_dir/cmvn_$name.log \
   && echo "Error computing CMVN stats. See $log_dir/cmvn_$name.log" \

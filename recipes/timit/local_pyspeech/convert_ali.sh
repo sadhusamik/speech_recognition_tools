@@ -14,5 +14,6 @@ for x in `ls $ali_dir_old/ali.*.gz`; do
     $model_dir_new/tree \
     "ark:gunzip -c $x |" \
     "ark:|gzip -c > $ali_dir_new/$ali_name"
-  cp $model_dir_new/final.mdl $ali_dir_new/final.mdl || exit 1;
 done
+
+cp $model_dir_new/{final.mdl,cmvn_opts,num_jobs,tree} $ali_dir_new/ || exit 1;

@@ -22,9 +22,11 @@ append=
 score_script=score.sh
 override_cmvn=
 override_model=
+override_egs_config=
+override_priors=
 compute_cmvn=false
 override_prior=
-ae_type=normal
+
 # Decoder parameters
 min_active=200
 max_active=700
@@ -50,6 +52,27 @@ mkdir -p $decode_dir
 if [ $stage -le 0 ]; then 
   echo "$0: Compute Log-likelihood"
 
+  cmvn_path=$hybrid_dir/perutt_cmvn_${test_set}_${feat_type}
+  compute-cmvn-stats \
+    scp:$data_dir/$test_set/feats.scp \
+    ark,scp:$cmvn_path.ark,$cmvn_path.scp  || exit 1;
+  
+  add_opts="--override_trans=cmvn_utt,$cmvn_path.scp"
+  
+  if [ ! -z $override_egs_config ]; then
+    echo "$0: Overriding egs.config file" 
+    egs_config_file=$override_egs_config
+  else
+    egs_config_file=$hybrid_dir/egs/${train_set}/egs.config
+  fi
+
+  if [ ! -z $override_priors ]; then
+    echo "$0: Overriding prior file" 
+    prior_file=$override_priors
+  else
+    prior_file=$hybrid_dir/priors
+  fi
+
   split_scp=""
   for n in `seq $nj`; do 
     split_scp="$split_scp $log_dir/${test_set}.$n.scp"
@@ -69,36 +92,10 @@ if [ $stage -le 0 ]; then
     model=$override_model
     echo "$0: Overriding with model $model"
   fi
-  
-  if $compute_cmvn; then 
-    echo "$0: Computing fresh CMVN on test set $test_set"
-    cmvn_type=cmvn_utt
-    cmvn_path=`realpath $hybrid_dir/perutt_cmvn_${test_set}_${feat_type}`
-    compute-cmvn-stats \
-      scp:$data_dir/$test_set/feats.scp \
-      ark,scp:$cmvn_path.ark,$cmvn_path.scp  || exit 1;
-    add_opts="--override_trans=$cmvn_type,$cmvn_path.scp"
-  else
-    if [ -z $override_cmvn ]; then 
-      add_opts=""
-    else
-      echo "$0: Overriding cmvn with given file"
-      add_opts="--override_trans=$override_cmvn"
-    fi
-  fi
-
-  if [ ! -z $override_prior ]; then 
-    echo "$0: Overriding prior with given file"
-    prior_file=$override_prior
-  else
-    echo "$0: Using prior from $hybrid_dir"
-    prior_file=$hybrid_dir/priors
-  fi
 
   queue.pl --mem 10G JOB=1:$nj \
     $log_dir/compute_llikelihood_${test_set}.JOB.log \
-    python3 $nnet_src/dump_genclassifier_outputs.py $add_opts \
-    --ae_type=$ae_type \
+    python3 $nnet_src/compute_CURL_classifier_likelihood.py $add_opts \
     --prior=$prior_file \
     --prior_weight=$pw \
     $model \

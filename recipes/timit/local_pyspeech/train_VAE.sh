@@ -13,29 +13,29 @@ hmm_dir=exp/tri3
 use_gpu=true
 train_set=train
 dev_set=dev
-test_set=test
 nn_name=nnet_gru_3lenc_1lclas_1lae_256nodes
-num_egs_jobs=10
+num_egs_jobs=2
 
 # Neural network config
-num_layers=3
+encoder_num_layers=2
+decoder_num_layers=2
+classifier_num_layers=1
+ae_num_layers=1
 hidden_dim=256
+bn_dim=30
 batch_size=64
 epochs=300
-num_classes=38
 model_save_interval=10
-dropout=0
-weight_decay=0
+weight_decay=0.001
 
 # Feature config
 feature_dim=13
-left_context=4
-right_context=4
+left_context=6
+right_context=6
 max_seq_len=512
 ali_type="phone"
 ali_append=
-per_utt_cmvn=false
-data_prep_only=false
+per_utt_cmvn=true
 
 . utils/parse_options.sh || exit 1;
 
@@ -45,31 +45,33 @@ log_dir=$hybrid_dir/log
 echo "$0: nn_name=$nn_name"
 
 if [ $stage -le 0 ]; then 
-  
+
   if $per_utt_cmvn; then
     cmvn_type=cmvn_utt
-    for x in $train_set $test_set $dev_set; do
-      cmvn_path=`realpath $hybrid_dir/perutt_cmvn_${x}_${feat_type}`
+    for x in $train_set $dev_set; do
+      cmvn_path=$hybrid_dir/perutt_cmvn_${x}_${feat_type}
       compute-cmvn-stats \
         scp:$data_dir/$x/feats.scp \
         ark,scp:$cmvn_path.ark,$cmvn_path.scp  || exit 1;
     done
   else
     cmvn_type=cmvn
-    cmvn_path=`realpath $hybrid_dir/global_cmvn_${feat_type}`
+    cmvn_path=$hybrid_dir/global_cmvn_${feat_type}
     compute-cmvn-stats scp:$data_dir/$train_set/feats.scp $cmvn_path  || exit 1;
   fi
 
-  for x in $train_set $dev_set $test_set; do
+  for x in $train_set $dev_set ; do
     egs_dir=$hybrid_dir/egs/$x
-    cmvn_path=$hybrid_dir/perutt_cmvn_${x}_${feat_type}.scp
     mkdir -p $egs_dir
+
     if [ ! -z $ali_append ]; then 
       ali_name=${ali_append}_${x}
     else
       ali_name=$x
     fi
-
+    if $per_utt_cmvn; then 
+      cmvn_path=$data_dir/$x/cmvn.scp
+    fi
     python3 $nnet_src/data_prep_for_seq.py \
       --num_jobs=$num_egs_jobs \
       --feat_type=$cmvn_type,$cmvn_path \
@@ -82,26 +84,22 @@ if [ $stage -le 0 ]; then
   done
 fi
 
-if $data_prep_only; then 
-  exit
-fi
-
 if [ $stage -le 1 ]; then 
   if $use_gpu; then 
     $cuda_cmd --mem 5G \
-      $hybrid_dir/log/train_rnn_${nn_name}.log \
-      python3 $nnet_src/train_rnn_nnet_classifier.py \
+      $hybrid_dir/log/train_VAE_${nn_name}.log \
+      python3 $nnet_src/train_VAE.py \
       --use_gpu \
       --train_set=$train_set \
       --dev_set=$dev_set \
-      --num_layers=$num_layers \
+      --encoder_num_layers=$encoder_num_layers \
+      --decoder_num_layers=$decoder_num_layers \
       --hidden_dim=$hidden_dim \
+      --bn_dim=$bn_dim \
       --batch_size=$batch_size \
       --epochs=$epochs \
-      --dropout=$dropout \
       --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
-      --num_classes=$num_classes \
       --model_save_interval=$model_save_interval \
       --experiment_name=exp_1 \
       $hybrid_dir/egs \
@@ -109,18 +107,18 @@ if [ $stage -le 1 ]; then
   else
 
     queue.pl --mem 5G \
-      $hybrid_dir/log/train_rnn_${nn_name}.log \
-      python3 $nnet_src/train_rnn_nnet_classifier.py \
+      $hybrid_dir/log/train_VAE_${nn_name}.log \
+      python3 $nnet_src/train_VAE.py \
       --train_set=$train_set \
       --dev_set=$dev_set \
-      --num_layers=$num_layers \
+      --encoder_num_layers=$encoder_num_layers \
+      --decoder_num_layers=$decoder_num_layers \
       --hidden_dim=$hidden_dim \
+      --bn_dim=$bn_dim \
       --batch_size=$batch_size \
       --epochs=$epochs \
-      --dropout=$dropout \
       --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
-      --num_classes=$num_classes \
       --model_save_interval=$model_save_interval \
       --experiment_name=exp_1 \
       $hybrid_dir/egs \
@@ -129,14 +127,5 @@ if [ $stage -le 1 ]; then
 
   cp $hybrid_dir/$nn_name/exp_1.dir/exp_1__epoch_300.model \
     $hybrid_dir/$nn_name/exp_1.dir/final.mdl || exit 1 ;
-fi
-
-if [ $stage -le 2 ]; then 
-  queue.pl $hybrid_dir/log/compute_prior.log \
-    python3 $nnet_src/compute_log_prior.py \
-    --ali_type=$ali_type \
-    --num_classes=$num_classes \
-    ${hmm_dir}_ali_${train_set} \
-    $hybrid_dir/priors || exit 1;
 fi
 
