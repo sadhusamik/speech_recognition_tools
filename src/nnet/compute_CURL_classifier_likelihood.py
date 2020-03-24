@@ -3,7 +3,7 @@ import logging
 import argparse
 import torch
 from torch.autograd import Variable
-from nnet_models import nnetAEClassifierMultitask, nnetVAEClassifier, nnetRNN, VAEEncodedClassifier, nnetVAE
+from nnet_models import nnetCurlClassifier
 import kaldi_io
 from features import dict2Ark
 import numpy as np
@@ -16,14 +16,12 @@ def softmax(X):
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Dump likelihoods or posteriors from a genclassifier model")
+    parser = argparse.ArgumentParser(description="Dump likelihoods or posteriors from CURL classifier model")
 
-    parser.add_argument("model", help="genclassifier pytorch nnet model")
+    parser.add_argument("model", help="CURL classifier model")
     parser.add_argument("scp", help="scp files for features")
     parser.add_argument("egs_config", help="config file for generating examples")
     parser.add_argument("save_file", help="file to save posteriors")
-    parser.add_argument("--ae_type", default="normal", help="Type of autoencoder vae/normal/noae/vaeenc")
-    parser.add_argument("--vae", default=None, help="Path to VAE for ")
     parser.add_argument("--prior", default=None, help="Provide prior to normalize and get likelihoods")
     parser.add_argument("--prior_weight", type=float, default=0.8, help="Weight for the prior distribution")
     parser.add_argument("--add_softmax", action="store_true", help="Set to add softmax when dumping posteriors")
@@ -34,35 +32,10 @@ def get_args():
 def get_output(config):
     # Load model
     nnet = torch.load(config.model, map_location=lambda storage, loc: storage)
-    if config.ae_type == "normal":
-        model = nnetAEClassifierMultitask(nnet['feature_dim'] * nnet['num_frames'], nnet['num_classes'],
-                                          nnet['encoder_num_layers'], nnet['classifier_num_layers'],
-                                          nnet['ae_num_layers'],
-                                          nnet['hidden_dim'],
-                                          nnet['bn_dim'], nnet['enc_dropout'])
-    elif config.ae_type == "vae":
-        model = nnetVAEClassifier(nnet['feature_dim'] * nnet['num_frames'], nnet['num_classes'],
-                                  nnet['encoder_num_layers'], nnet['classifier_num_layers'],
-                                  nnet['ae_num_layers'],
-                                  nnet['hidden_dim'],
-                                  nnet['bn_dim'], nnet['enc_dropout'], use_gpu=False)
-    elif config.ae_type == "noae":
-        model = nnetRNN(nnet['feature_dim'] * nnet['num_frames'],
-                        nnet['num_layers'],
-                        nnet['hidden_dim'],
-                        nnet['num_classes'], nnet['dropout'])
-    elif config.ae_type == "vaeenc":
-        nnet['vaeenc'] = "exp_hybrid/hybrid_lll/nnet_vae_enc2l_dec2l_300nodes/exp_1.dir/exp_1__epoch_160.model"
-        vae = torch.load(nnet['vaeenc'], map_location=lambda storage, loc: storage)
-        vae_model = nnetVAE(vae['feature_dim'] * vae['num_frames'], vae['encoder_num_layers'],
-                            vae['decoder_num_layers'], vae['hidden_dim'], vae['bn_dim'], 0, False)
-        model = VAEEncodedClassifier(vae_model,
-                                     vae['bn_dim'],
-                                     nnet['num_layers'],
-                                     nnet['hidden_dim'], nnet['num_classes'])
-    else:
-        print("Model type {} not supported!".format(config.ae_type))
-        sys.exit(1)
+    model = nnetCurlClassifier(nnet['feature_dim'] * nnet['num_frames'], nnet['encoder_num_layers'],
+                               nnet['decoder_num_layers'], nnet['classifier_num_layers'], nnet['hidden_dim'],
+                               nnet['hidden_dim_classifier'], nnet['bn_dim'], nnet['comp_num'],
+                               nnet['num_classes'], use_gpu=False)
 
     model.load_state_dict(nnet['model_state_dict'])
     feats_config = pickle.load(open(config.egs_config, 'rb'))
@@ -97,15 +70,7 @@ def get_output(config):
     for utt_id, mat in kaldi_io.read_mat_ark(cmd):
         mat = Variable(torch.FloatTensor(mat))[None, :, :]
         batch_l = Variable(torch.IntTensor([mat.size(1)]))
-        if config.ae_type == "normal":
-            out, _ = model(mat, batch_l)
-        elif config.ae_type == "vae":
-            out, _, _ = model(mat, batch_l)
-        elif config.ae_type == "noae":
-            out = model(mat, batch_l)
-        elif config.ae_type == "vaeenc":
-            out = model(mat, batch_l)
-
+        out, _, _ = model(mat, batch_l)
         if config.prior:
             post_dict[utt_id] = lsm(out[0, :, :]).data.numpy() - config.prior_weight * prior
         else:

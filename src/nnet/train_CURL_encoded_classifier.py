@@ -7,7 +7,7 @@ import torch
 from torch.autograd import Variable
 from torch import nn, optim
 from torch.utils import data
-from nnet_models import nnetRNN
+from nnet_models import nnetCurlSupervised, curlLatentSampler, nnetRNN
 from datasets import nnetDatasetSeq
 import pickle as pkl
 
@@ -35,9 +35,47 @@ def compute_fer(x, l):
     return err
 
 
-def get_args():
-    parser = argparse.ArgumentParser(description="Train RNN Acoustic Model")
+def pad2list(padded_seq, lengths):
+    return torch.cat([padded_seq[i, 0:lengths[i]] for i in range(padded_seq.size(0))])
 
+
+def pad2list3d(padded_seq, lengths):
+    return torch.cat([padded_seq[:, i, 0:lengths[i]] for i in range(padded_seq.size(1))], dim=1)
+
+
+def compute_latent_features(latent, use_gpu=True):
+    embeddings = latent[1]
+    #prior = torch.argmax(latent[0], dim=2)
+    prior = latent[0]
+    s = embeddings.shape
+    embeddings = embeddings.view(s[0], s[1] * s[2], s[3])
+    prior = prior.view(s[1] * s[2], -1)
+    feats = torch.zeros(s[1] * s[2], s[3])
+    if use_gpu:
+        feats=feats.cuda()
+    for idx in range(prior.shape[1]):
+        feats += embeddings[idx, :] * torch.cat(s[3] * [(prior[:, idx])[:, None]], dim=1)
+    # embeddings = torch.cat([(embeddings[idx2, idx1, :])[None, :] for idx1, idx2 in enumerate(prior)], dim=0)
+    # embeddings = embeddings.view(s[1], s[2], s[3])
+    return feats.view(s[1], s[2], s[3])
+
+def compute_latent_features_selectmax(latent):
+
+    embeddings = latent[1]
+    prior = torch.argmax(latent[0], dim=2)
+    s = embeddings.shape
+    embeddings = embeddings.view(s[0], s[1] * s[2], s[3])
+    prior = prior.view(s[1] * s[2], -1)
+    embeddings = torch.cat([(embeddings[idx2, idx1, :])[None, :] for idx1, idx2 in enumerate(prior)], dim=0)
+    embeddings = embeddings.view(s[1], s[2], s[3])
+
+    return embeddings
+
+
+def get_args():
+    parser = argparse.ArgumentParser(description="Train nnet classifier with VAE encoded features")
+
+    parser.add_argument("curl_model", type=str, help="Vae model path")
     parser.add_argument("egs_dir", type=str, help="Path to the preprocessed data")
     parser.add_argument("store_path", type=str, help="Where to save the trained models and logs")
 
@@ -54,7 +92,7 @@ def get_args():
     parser.add_argument("--dev_set", default="test_dev93", help="Name of development dataset")
     parser.add_argument("--clip_thresh", type=float, default=1, help="Gradient clipping threshold")
     parser.add_argument("--lrr", type=float, default=0.5, help="Learning rate reduction rate")
-    parser.add_argument("--lr_tol", type=float, default=0.5,
+    parser.add_argument("--lr_tol", type=float, default=0.1,
                         help="Percentage of tolerance to leave on dev error for lr scheduling")
     parser.add_argument("--dropout", type=float, default=0, help="Dropout rate")
     parser.add_argument("--weight_decay", type=float, default=0, help="L2 Regularization weight")
@@ -89,17 +127,22 @@ def run(config):
     console.setFormatter(formatter)
     logging.getLogger('').addHandler(console)
 
-    # Load feature configuration
-    egs_config = pkl.load(open(os.path.join(config.egs_dir, config.train_set, 'egs.config'), 'rb'))
-    context = egs_config['concat_feats'].split(',')
-    num_frames = int(context[0]) + int(context[1]) + 1
+    # Load VAE model and define classifier
+    curl = torch.load(config.curl_model, map_location=lambda storage, loc: storage)
+    curl_model = nnetCurlSupervised(curl['feature_dim'] * curl['num_frames'], curl['encoder_num_layers'],
+                                    curl['decoder_num_layers'], curl['hidden_dim'], curl['bn_dim'], curl['comp_num'],
+                                    config.use_gpu)
+    curl_model.load_state_dict(curl["model_state_dict"])
+    #curl_sampler = curlLatentSampler(config.use_gpu)
+
+    model = nnetRNN(curl['bn_dim'], config.num_layers, config.hidden_dim, config.num_classes,0)
 
     logging.info('Model Parameters: ')
     logging.info('Number of Layers: %d' % (config.num_layers))
-    logging.info('Hidden Dimension: %d' % (config.feature_dim))
+    logging.info('Hidden Dimension: %d' % (config.hidden_dim))
     logging.info('Number of Classes: %d' % (config.num_classes))
-    logging.info('Data dimension: %d' % (config.feature_dim))
-    logging.info('Number of Frames: %d' % (num_frames))
+    logging.info('Data dimension: %d' % (curl['feature_dim']))
+    logging.info('Number of Frames: %d' % (curl['num_frames']))
     logging.info('Optimizer: %s ' % (config.optimizer))
     logging.info('Batch Size: %d ' % (config.batch_size))
     logging.info('Initial Learning Rate: %f ' % (config.learning_rate))
@@ -108,15 +151,13 @@ def run(config):
     logging.info('Weight decay: %f ' % (config.weight_decay))
     sys.stdout.flush()
 
-    model = nnetRNN(config.feature_dim * num_frames, config.num_layers, config.hidden_dim,
-                    config.num_classes, config.dropout)
-
     if config.use_gpu:
         # Set environment variable for GPU ID
         id = get_device_id()
         os.environ["CUDA_VISIBLE_DEVICES"] = id
 
         model = model.cuda()
+        curl_model = curl_model.cuda()
 
     criterion = nn.CrossEntropyLoss()
 
@@ -174,7 +215,11 @@ def run(config):
                 batch_l = Variable(batch_l[indices])
                 lab = Variable(lab[indices])
 
+            # First get CURL embeddings
+            _, latent = curl_model(batch_x, batch_l)
+            batch_x = compute_latent_features(latent)
             optimizer.zero_grad()
+
             # Main forward pass
             class_out = model(batch_x, batch_l)
             class_out = pad2list(class_out, batch_l)
@@ -214,6 +259,10 @@ def run(config):
                 batch_l = Variable(batch_l[indices])
                 lab = Variable(lab[indices])
 
+            # First get CURL embeddings
+            _, latent = curl_model(batch_x, batch_l)
+            batch_x = compute_latent_features(latent)
+
             optimizer.zero_grad()
             # Main forward pass
             class_out = model(batch_x, batch_l)
@@ -227,7 +276,6 @@ def run(config):
                 val_fer.append(compute_fer(class_out.cpu().data.numpy(), lab.cpu().data.numpy()))
             else:
                 val_fer.append(compute_fer(class_out.data.numpy(), lab.data.numpy()))
-
         # Manage learning rate and revert model
         if epoch_i == 0:
             err_p = np.mean(val_losses)
@@ -257,8 +305,9 @@ def run(config):
             model_path = os.path.join(model_dir, config.experiment_name + '__epoch_%d' % (epoch_i + 1) + '.model')
             torch.save({
                 'epoch': epoch_i + 1,
-                'feature_dim': config.feature_dim,
-                'num_frames': num_frames,
+                'vaeenc': config.curl_model,
+                'feature_dim': curl['feature_dim'],
+                'num_frames': curl['num_frames'],
                 'num_classes': config.num_classes,
                 'num_layers': config.num_layers,
                 'hidden_dim': config.hidden_dim,

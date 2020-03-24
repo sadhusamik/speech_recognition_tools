@@ -7,7 +7,7 @@ import torch
 from torch.autograd import Variable
 from torch import nn, optim
 from torch.utils import data
-from nnet_models import nnetRNN
+from nnet_models import cnnClassifier
 from datasets import nnetDatasetSeq
 import pickle as pkl
 
@@ -36,13 +36,16 @@ def compute_fer(x, l):
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Train RNN Acoustic Model")
+    parser = argparse.ArgumentParser(description="Train CNN Acoustic Model")
 
     parser.add_argument("egs_dir", type=str, help="Path to the preprocessed data")
     parser.add_argument("store_path", type=str, help="Where to save the trained models and logs")
 
-    parser.add_argument("--num_layers", default=5, type=int, help="Number of layers")
+    parser.add_argument("--num_layers_dec", default=5, type=int, help="Number of layers")
     parser.add_argument("--hidden_dim", default=512, type=int, help="Number of hidden nodes")
+    parser.add_argument("--in_channels", default="1,5,5", help="Input channels for modnet encoder")
+    parser.add_argument("--out_channels", default="5,5,5", help="Output channels for modnet encoder")
+    parser.add_argument("--kernel", default=5, type=int, help="Kernel size of modnet encoder")
 
     # Training configuration
     parser.add_argument("--optimizer", default="adam", type=str,
@@ -95,9 +98,12 @@ def run(config):
     num_frames = int(context[0]) + int(context[1]) + 1
 
     logging.info('Model Parameters: ')
-    logging.info('Number of Layers: %d' % (config.num_layers))
+    logging.info('Number of Decoder Layers: %d' % (config.num_layers_dec))
     logging.info('Hidden Dimension: %d' % (config.feature_dim))
     logging.info('Number of Classes: %d' % (config.num_classes))
+    logging.info('Input channels: %s' % (config.in_channels))
+    logging.info('Output channels: %s' % (config.out_channels))
+    logging.info('Kernel Size: %d' % (config.kernel))
     logging.info('Data dimension: %d' % (config.feature_dim))
     logging.info('Number of Frames: %d' % (num_frames))
     logging.info('Optimizer: %s ' % (config.optimizer))
@@ -108,8 +114,13 @@ def run(config):
     logging.info('Weight decay: %f ' % (config.weight_decay))
     sys.stdout.flush()
 
-    model = nnetRNN(config.feature_dim * num_frames, config.num_layers, config.hidden_dim,
-                    config.num_classes, config.dropout)
+    in_channels = config.in_channels.split(',')
+    in_channels = [int(x) for x in in_channels]
+    out_channels = config.out_channels.split(',')
+    out_channels = [int(x) for x in out_channels]
+    model = cnnClassifier(config.feature_dim, num_frames, in_channels, out_channels, config.kernel,
+                          config.num_layers_dec, config.hidden_dim,
+                          config.num_classes)
 
     if config.use_gpu:
         # Set environment variable for GPU ID
@@ -153,6 +164,7 @@ def run(config):
     ep_fer_dev = []
     err_p = 0
     best_model_state = None
+
     for epoch_i in range(config.epochs):
 
         ####################
@@ -162,27 +174,32 @@ def run(config):
         model.train()
         train_losses = []
         tr_fer = []
+
         # Main training loop
         for batch_x, batch_l, lab in data_loader_train:
-            _, indices = torch.sort(batch_l, descending=True)
+            s = batch_x.shape
+            batch_x = batch_x.view(s[0], s[1], config.feature_dim, num_frames)
+            batch_x = batch_x.view(s[0] * s[1], config.feature_dim, num_frames)
+            batch_x = batch_x[:, None, :, :]  # change the data format for CNNs
             if config.use_gpu:
-                batch_x = Variable(batch_x[indices]).cuda()
-                batch_l = Variable(batch_l[indices]).cuda()
-                lab = Variable(lab[indices]).cuda()
+                batch_x = Variable(batch_x).cuda()
+                batch_l = Variable(batch_l).cuda()
+                lab = Variable(lab).cuda()
             else:
-                batch_x = Variable(batch_x[indices])
-                batch_l = Variable(batch_l[indices])
-                lab = Variable(lab[indices])
+                batch_x = Variable(batch_x)
+                batch_l = Variable(batch_l)
+                lab = Variable(lab)
 
             optimizer.zero_grad()
             # Main forward pass
-            class_out = model(batch_x, batch_l)
+            class_out = model(batch_x)
+            class_out = class_out.view(s[0], s[1], -1)
             class_out = pad2list(class_out, batch_l)
             lab = pad2list(lab, batch_l)
-
             loss = criterion(class_out, lab)
 
             train_losses.append(loss.item())
+
             if config.use_gpu:
                 tr_fer.append(compute_fer(class_out.cpu().data.numpy(), lab.cpu().data.numpy()))
             else:
@@ -202,27 +219,33 @@ def run(config):
         model.eval()
         val_losses = []
         val_fer = []
+
         # Main training loop
         for batch_x, batch_l, lab in data_loader_dev:
-            _, indices = torch.sort(batch_l, descending=True)
+            s = batch_x.shape
+            batch_x = batch_x.view(s[0], s[1], config.feature_dim, num_frames)  # change the data format for CNNs
+            batch_x = batch_x.view(s[0] * s[1], config.feature_dim, num_frames)
+            batch_x = batch_x[:, None, :, :]
             if config.use_gpu:
-                batch_x = Variable(batch_x[indices]).cuda()
-                batch_l = Variable(batch_l[indices]).cuda()
-                lab = Variable(lab[indices]).cuda()
+                batch_x = Variable(batch_x).cuda()
+                batch_l = Variable(batch_l).cuda()
+                lab = Variable(lab).cuda()
             else:
-                batch_x = Variable(batch_x[indices])
-                batch_l = Variable(batch_l[indices])
-                lab = Variable(lab[indices])
+                batch_x = Variable(batch_x)
+                batch_l = Variable(batch_l)
+                lab = Variable(lab)
 
             optimizer.zero_grad()
             # Main forward pass
-            class_out = model(batch_x, batch_l)
+            class_out = model(batch_x)
+            class_out = class_out.view(s[0], s[1], -1)
             class_out = pad2list(class_out, batch_l)
             lab = pad2list(lab, batch_l)
 
             loss = criterion(class_out, lab)
 
             val_losses.append(loss.item())
+
             if config.use_gpu:
                 val_fer.append(compute_fer(class_out.cpu().data.numpy(), lab.cpu().data.numpy()))
             else:
@@ -247,10 +270,13 @@ def run(config):
         ep_loss_dev.append(np.mean(val_losses))
         ep_fer_dev.append(np.mean(val_fer))
 
-        print_log = "Epoch: {:d} ((lr={:.6f})) Tr loss: {:.3f} :: Tr FER: {:.2f}".format(epoch_i + 1, lr,
-                                                                                         ep_loss_tr[-1],
-                                                                                         ep_fer_tr[-1])
-        print_log += " || Val: {:.3f} :: Val FER: {:.2f}".format(ep_loss_dev[-1], ep_fer_dev[-1])
+        print_log = "Epoch: {:d} ((lr={:.6f})) Tr loss: {:.3f} :: Tr FER: {:.2f}".format(
+            epoch_i + 1, lr,
+            ep_loss_tr[-1],
+            ep_fer_tr[-1])
+        print_log += " || Val: {:.3f} :: Val FER: {:.2f}".format(ep_loss_dev[-1],
+                                                                 ep_fer_dev[-1],
+                                                                 )
         logging.info(print_log)
 
         if (epoch_i + 1) % config.model_save_interval == 0:
@@ -260,8 +286,11 @@ def run(config):
                 'feature_dim': config.feature_dim,
                 'num_frames': num_frames,
                 'num_classes': config.num_classes,
-                'num_layers': config.num_layers,
+                'num_layers_dec': config.num_layers_dec,
                 'hidden_dim': config.hidden_dim,
+                'in_channels': config.in_channels,
+                'out_channels': config.out_channels,
+                'kernel': config.kernel,
                 'ep_loss_tr': ep_loss_tr,
                 'ep_loss_dev': ep_loss_dev,
                 'dropout': config.dropout,

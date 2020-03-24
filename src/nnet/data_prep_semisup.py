@@ -13,7 +13,7 @@ import pickle as pkl
 
 
 def get_config():
-    parser = argparse.ArgumentParser("Prepare Data for training sequence based models in pyTorch")
+    parser = argparse.ArgumentParser("Prepare Data for training sequence based models in pyTorch with missing labels")
     parser.add_argument("feat_file_scp", type=str,
                         help="Feature scp file")
     parser.add_argument("ali_dir", type=str,
@@ -86,7 +86,7 @@ def get_labels(ali_dir, ali_type, config):
                     {u + ".pt": F.pad(torch.FloatTensor(d - 1).long(), (0, config.max_seq_len - d.shape[0])) for u, d in
                      kaldi_io.read_vec_int_ark(pdf_ali_file)})
 
-    torch.save(pdf_ali_dict, os.path.join(config.save_dir, 'labels.pkl'))
+    return pdf_ali_dict
 
 
 def dump_uttwise_feats(scp, config):
@@ -113,7 +113,9 @@ def dump_uttwise_feats(scp, config):
 
     feats = {key: mat for key, mat in kaldi_io.read_mat_ark(cmd)}
 
+    utt_list = []
     for utt_id in feats:
+        utt_list.append(utt_id + '.pt')
         one_feat = feats[utt_id]
         if config.notruncpad:
             id2len[utt_id + '.pt'] = one_feat.shape[0]
@@ -128,6 +130,21 @@ def dump_uttwise_feats(scp, config):
     with open(os.path.join(config.save_dir, pid + '.lns'), 'wb') as f:
         pickle.dump(id2len, f)
 
+    with open(os.path.join(config.save_dir, pid + '.uttlist'), 'wb') as f:
+        pickle.dump(utt_list, f)
+
+
+def get_all_utt_list(save_dir):
+    utt_list = []
+    utt_files = [os.path.join(save_dir, f) for f in listdir(save_dir) if f.endswith('.uttlist')]
+
+    for x in utt_files:
+        with open(x, 'rb') as f:
+            utts = pickle.load(f)
+        utt_list.extend(utts)
+
+    return utt_list
+
 
 def get_all_lengths(save_dir):
     length_dict = {}
@@ -140,6 +157,8 @@ def get_all_lengths(save_dir):
 
     with open(os.path.join(save_dir, 'lengths.pkl'), 'wb') as f:
         pickle.dump(length_dict, f)
+
+    return length_dict
 
 
 def run():
@@ -155,8 +174,19 @@ def run():
     for p in feat_gen_processes:
         p.join()
 
-    get_all_lengths(config.save_dir)
-    get_labels(config.ali_dir, config.ali_type, config)
+    length_dict = get_all_lengths(config.save_dir)
+    utt_list = get_all_utt_list(config.save_dir)
+    pdf_ali_dict = get_labels(config.ali_dir, config.ali_type, config)
+
+    # Fill in missing labels with 0
+    pdf_ali_dict_large = {}
+    for utt in utt_list:
+        if utt in pdf_ali_dict:
+            pdf_ali_dict_large[utt] = pdf_ali_dict[utt]
+        else:
+            pdf_ali_dict_large[utt] = torch.zeros(config.max_seq_len).long()
+
+    torch.save(pdf_ali_dict_large, os.path.join(config.save_dir, 'labels.pkl'))
 
     # if not os.path.isfile(os.path.join(egs_path, 'egs.config')):
     egs_config = {}

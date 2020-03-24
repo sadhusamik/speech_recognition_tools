@@ -44,7 +44,7 @@ class nnetDataset3Seq(data.Dataset):
         self.path1 = paths[0]
         self.path2 = paths[1]
         self.path3 = paths[2]
-        with open(join(path1, 'lengths.pkl'), 'rb') as f:
+        with open(join(self.path1, 'lengths.pkl'), 'rb') as f:
             self.lengths = pickle.load(f)
         self.labels = torch.load(join(self.path1, 'labels.pkl'))
         self.ids = list(self.labels.keys())

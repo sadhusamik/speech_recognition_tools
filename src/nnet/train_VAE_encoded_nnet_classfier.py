@@ -7,7 +7,7 @@ import torch
 from torch.autograd import Variable
 from torch import nn, optim
 from torch.utils import data
-from nnet_models import nnetRNN
+from nnet_models import VAEEncodedClassifier, nnetVAE
 from datasets import nnetDatasetSeq
 import pickle as pkl
 
@@ -36,8 +36,9 @@ def compute_fer(x, l):
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Train RNN Acoustic Model")
+    parser = argparse.ArgumentParser(description="Train nnet classifier with VAE encoded features")
 
+    parser.add_argument("vae_model", type=str, help="Vae model path")
     parser.add_argument("egs_dir", type=str, help="Path to the preprocessed data")
     parser.add_argument("store_path", type=str, help="Where to save the trained models and logs")
 
@@ -89,17 +90,20 @@ def run(config):
     console.setFormatter(formatter)
     logging.getLogger('').addHandler(console)
 
-    # Load feature configuration
-    egs_config = pkl.load(open(os.path.join(config.egs_dir, config.train_set, 'egs.config'), 'rb'))
-    context = egs_config['concat_feats'].split(',')
-    num_frames = int(context[0]) + int(context[1]) + 1
+    # Load VAE model and define classifier
+    vae = torch.load(config.vae_model, map_location=lambda storage, loc: storage)
+    vae_model = nnetVAE(vae['feature_dim'] * vae['num_frames'], vae['encoder_num_layers'],
+                        vae['decoder_num_layers'], vae['hidden_dim'], vae['bn_dim'], 0, config.use_gpu)
+    vae_model.load_state_dict(vae["model_state_dict"])
+    model = VAEEncodedClassifier(vae_model, vae['bn_dim'], config.num_layers, config.hidden_dim,
+                                 config.num_classes)
 
     logging.info('Model Parameters: ')
     logging.info('Number of Layers: %d' % (config.num_layers))
-    logging.info('Hidden Dimension: %d' % (config.feature_dim))
+    logging.info('Hidden Dimension: %d' % (config.hidden_dim))
     logging.info('Number of Classes: %d' % (config.num_classes))
-    logging.info('Data dimension: %d' % (config.feature_dim))
-    logging.info('Number of Frames: %d' % (num_frames))
+    logging.info('Data dimension: %d' % (vae['feature_dim']))
+    logging.info('Number of Frames: %d' % (vae['num_frames']))
     logging.info('Optimizer: %s ' % (config.optimizer))
     logging.info('Batch Size: %d ' % (config.batch_size))
     logging.info('Initial Learning Rate: %f ' % (config.learning_rate))
@@ -107,9 +111,6 @@ def run(config):
     logging.info('Learning rate reduction rate: %f ' % (config.lrr))
     logging.info('Weight decay: %f ' % (config.weight_decay))
     sys.stdout.flush()
-
-    model = nnetRNN(config.feature_dim * num_frames, config.num_layers, config.hidden_dim,
-                    config.num_classes, config.dropout)
 
     if config.use_gpu:
         # Set environment variable for GPU ID
@@ -257,8 +258,9 @@ def run(config):
             model_path = os.path.join(model_dir, config.experiment_name + '__epoch_%d' % (epoch_i + 1) + '.model')
             torch.save({
                 'epoch': epoch_i + 1,
-                'feature_dim': config.feature_dim,
-                'num_frames': num_frames,
+                'vaeenc': config.vae_model,
+                'feature_dim': vae['feature_dim'],
+                'num_frames': vae['num_frames'],
                 'num_classes': config.num_classes,
                 'num_layers': config.num_layers,
                 'hidden_dim': config.hidden_dim,
