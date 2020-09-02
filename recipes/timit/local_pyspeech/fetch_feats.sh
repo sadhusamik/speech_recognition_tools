@@ -23,7 +23,7 @@ counter=1
 while true ; do
 
   case $feat_source in 
-    kaldi) fname=$mfccdir/raw_mfcc_$name.$counter.scp ;;
+    kaldi) fname=$mfccdir/raw_${feat_type}_$name.$counter.scp ;;
     pyspeech) fname=$data_dir/$feat_type/${root_feat}_$name.$counter.scp ;;
     *) echo "Feature type $feat_source is nor recognized!"
        exit 1;;

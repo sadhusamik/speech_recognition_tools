@@ -17,77 +17,67 @@ nn_name=nnet_gru_3lenc_1lclas_1lae_256nodes
 num_egs_jobs=2
 
 # Neural network config
-num_layers=1
-hidden_size=300
+encoder_num_layers=2
+decoder_num_layers=2
+classifier_num_layers=1
+in_channels=1,32,64
+out_channels=32,64,128
+kernel=3,5
+ae_num_layers=1
+hidden_dim=256
+bn_dim=100
 batch_size=64
-epochs=100
-num_classes=38
+epochs=300
 model_save_interval=10
-dropout=0
-weight_decay=0
-vae=vae
-per_utt_cmvn==true
-in_channels="128,128,128"
-out_channels="128,128,128"
-kernel="3,9"
+weight_decay=0.001
+vae_type=modulation
+nopool=true
+beta=1
+nfilters=6
+nrepeats=50
+ar_steps=3,5
+filt_type=ellip
+reg_weight=0.1
+bn_bits=16
+nnet_model=nnet
 
 # Feature config
 feature_dim=13
-left_context=4
-right_context=4
+left_context=6
+right_context=6
 max_seq_len=512
 ali_type="phone"
 ali_append=
-vae_type="modulation"
-hybrid_arch=cnn
-l_num_layers=2
-d_num_layers=2
-num_streams=15
+per_utt_cmvn=true
 
 . utils/parse_options.sh || exit 1;
 
 mkdir -p $hybrid_dir 
 log_dir=$hybrid_dir/log
 
+vae_script=train_posterior_VAE.py
+add_vae_opts="--encoder_num_layers=$encoder_num_layers --decoder_num_layers=$decoder_num_layers --hidden_dim=$hidden_dim --bn_dim=$bn_dim --bn_bits=$bn_bits"
+
 echo "$0: nn_name=$nn_name"
 
-case $hybrid_arch in 
-  cldnn3d)
-    run_script="train_CNNVAE_encoded_nnet_classifier_cldnn3d.py --num_streams=$num_streams --in_channels=$in_channels --out_channels=$out_channels --kernel=$kernel --hidden_size=$hidden_size --l_num_layers=$l_num_layers --d_num_layers=$d_num_layers"
-    ;;
-  cldnn)
-    run_script="train_CNNVAE_encoded_nnet_classifier_cldnn.py --in_channels=$in_channels --out_channels=$out_channels --kernel=$kernel --hidden_size=$hidden_size --l_num_layers=$l_num_layers --d_num_layers=$d_num_layers"
-    ;;
-  cnn)
-    run_script="train_CNNVAE_encoded_nnet_classifier_cnn.py --in_channels=$in_channels --out_channels=$out_channels --kernel=$kernel"
-    ;;
-  rnn)
-    run_script=train_VAE_encoded_nnet_classfier.py
-    ;;
-  *) 
-    echo "$0: Hybrid Arch $hybrid_arch is not valid!"
-    exit 1;
-esac
-
-if [ $stage -le 0 ]; then
+if [ $stage -le 0 ]; then 
 
   if $per_utt_cmvn; then
     cmvn_type=cmvn_utt
     for x in $train_set $test_set $dev_set; do
-      cmvn_path=$hybrid_dir/perutt_cmvn_${x}_${feat_type}
+      cmvn_path=`realpath $hybrid_dir/perutt_cmvn_${x}_${feat_type}`
       compute-cmvn-stats \
         scp:$data_dir/$x/feats.scp \
         ark,scp:$cmvn_path.ark,$cmvn_path.scp  || exit 1;
     done
   else
     cmvn_type=cmvn
-    cmvn_path=$hybrid_dir/global_cmvn_${feat_type}
+    cmvn_path=`realpath $hybrid_dir/global_cmvn_${feat_type}`
     compute-cmvn-stats scp:$data_dir/$train_set/feats.scp $cmvn_path  || exit 1;
   fi
-  
-  for x in $train_set $dev_set ; do
+
+  for x in $train_set $dev_set $test_set ; do
     egs_dir=$hybrid_dir/egs/$x
-    mkdir -p $egs_dir
     cmvn_path=$hybrid_dir/perutt_cmvn_${x}_${feat_type}.scp
     mkdir -p $egs_dir
     if [ ! -z $ali_append ]; then 
@@ -95,6 +85,7 @@ if [ $stage -le 0 ]; then
     else
       ali_name=$x
     fi
+    
     python3 $nnet_src/data_prep_for_seq.py \
       --num_jobs=$num_egs_jobs \
       --feat_type=$cmvn_type,$cmvn_path \
@@ -109,49 +100,38 @@ fi
 
 if [ $stage -le 1 ]; then 
   if $use_gpu; then 
-    $cuda_ccmd --mem 2G \
-      $hybrid_dir/log/train_vae_encoded_nnet_${nn_name}.log \
-      python3 $nnet_src/$run_script \
+    $cuda_ccmd --mem 5G \
+      $hybrid_dir/log/train_VAE_${nn_name}.log \
+      python3 $nnet_src/$vae_script $add_vae_opts \
       --use_gpu \
       --train_set=$train_set \
-      --vae_type=$vae_type \
       --dev_set=$dev_set \
       --batch_size=$batch_size \
       --epochs=$epochs \
       --weight_decay=$weight_decay \
-      --num_classes=$num_classes \
+      --feature_dim=$feature_dim \
       --model_save_interval=$model_save_interval \
       --experiment_name=exp_1 \
-      $vae \
+      $nnet_model \
       $hybrid_dir/egs \
       $hybrid_dir/$nn_name || exit 1;
   else
 
     queue.pl --mem 5G \
-      $hybrid_dir/log/train_vae_encoded_nnet_${nn_name}.log \
-      python3 $nnet_src/$run_script \
+      $hybrid_dir/log/train_VAE_${nn_name}.log \
+      python3 $nnet_src/$vae_script $add_vae_opts\
       --train_set=$train_set \
-      --vae_type=$vae_type \
       --dev_set=$dev_set \
       --batch_size=$batch_size \
       --epochs=$epochs \
       --weight_decay=$weight_decay \
-      --num_classes=$num_classes \
+      --feature_dim=$feature_dim \
       --model_save_interval=$model_save_interval \
       --experiment_name=exp_1 \
-      $vae \
+      $nnet_model \
       $hybrid_dir/egs \
       $hybrid_dir/$nn_name || exit 1;
   fi
 
-fi
-
-if [ $stage -le 2 ]; then 
-  queue.pl $hybrid_dir/log/compute_prior.log \
-    python3 $nnet_src/compute_log_prior.py \
-    --ali_type=$ali_type \
-    --num_classes=$num_classes \
-    ${hmm_dir}_ali_${train_set} \
-    $hybrid_dir/priors || exit 1;
 fi
 

@@ -22,10 +22,10 @@ append=
 score_script=score.sh
 override_cmvn=
 override_model=
-override_egs_config=
 compute_cmvn=false
 override_prior=
-ae_type=normal
+vae_arch=cnn
+
 # Decoder parameters
 min_active=200
 max_active=700
@@ -102,13 +102,13 @@ if [ $stage -le 0 ]; then
 
   queue.pl --mem 10G JOB=1:$nj \
     $log_dir/compute_llikelihood_${test_set}.JOB.log \
-    python3 $nnet_src/dump_genclassifier_outputs.py $add_opts \
-    --ae_type=$ae_type \
+    python3 $nnet_src/compute_vae_encoded_likelihood.py $add_opts \
     --prior=$prior_file \
     --prior_weight=$pw \
+    --vae_arch=$vae_arch \
     $model \
     $log_dir/${test_set}.JOB.scp \
-    $egs_config_file \
+    $hybrid_dir/egs/${train_set}/egs.config \
     $ll_dir/$test_set.JOB.ll || exit 1;
    
   for n in `seq $nj`; do

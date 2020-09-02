@@ -32,6 +32,7 @@ num_classes=116
 model_save_interval=10
 weight_decay=0.001
 per_utt_cmvn=false
+time_shift=5
 
 # Feature config
 feature_dim=13
@@ -110,6 +111,7 @@ if [ $stage -le 1 ]; then
       --hidden_dim_classifier=$hidden_dim_classifier \
       --bn_dim=$bn_dim \
       --comp_num=$comp_num \
+      --time_shift=$time_shift \
       --num_classes=$num_classes \
       --batch_size=$batch_size \
       --epochs=$epochs \
@@ -133,6 +135,7 @@ if [ $stage -le 1 ]; then
       --hidden_dim_classifier=$hidden_dim_classifier \
       --bn_dim=$bn_dim \
       --comp_num=$comp_num \
+      --time_shift=$time_shift \
       --num_classes=$num_classes \
       --batch_size=$batch_size \
       --epochs=$epochs \

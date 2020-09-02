@@ -19,7 +19,7 @@ num_threads=8
 append=
 score_script=score.sh
 override_egs_config=
-override_priors=
+priors=prior
 task_prior="0.33,0.33,0.33"
 
 # Decoder parameters
@@ -29,12 +29,35 @@ beam=8
 lattice_beam=13
 acwt=0.2
 remove_ll=true # Remove loglikelihood directory after decoding 
+pm_type=advanced_px_autoT
 
 . utils/parse_options.sh 
 
 echo "$@"
 models_pcx=$1
 models_px=$2
+
+case $pm_type in
+  per_frame)
+    script="compute_lifelong_likelihood_perframe.py"
+    ;;
+  advanced_post_vae)
+    script="compute_advanced_likelihood_postpm.py"
+    ;; 
+  advanced_px)
+    script="compute_advanced_likelihood.py"
+    ;;
+  advanced_px_autoT)
+    script="compute_advanced_likelihood_autoT.py"
+    ;;
+  post_vae)
+    script="compute_lifelong_likelihood_postpm.py"
+    ;; 
+  px)
+    script="compute_lifelong_likelihood.py"
+    ;; 
+
+esac
 
 thread_string=
 [ $num_threads -gt 1 ] && thread_string="-parallel --num-threads=$num_threads"
@@ -65,12 +88,7 @@ if [ $stage -le 0 ]; then
     egs_config_file=$hybrid_dir/egs/${train_set}/egs.config
   fi
 
-  if [ ! -z $override_priors ]; then
-    echo "$0: Overriding prior file" 
-    prior_file=$override_priors
-  else
-    prior_file=$hybrid_dir/priors
-  fi
+  prior_file=$priors
 
   split_scp=""
   for n in `seq $nj`; do 
@@ -80,7 +98,7 @@ if [ $stage -le 0 ]; then
 
   queue.pl --mem 10G JOB=1:$nj \
     $log_dir/compute_llikelihood_${test_set}.JOB.log \
-    python3 $nnet_src/compute_lifelong_likelihood.py $add_opts \
+    python3 $nnet_src/$script $add_opts \
     --prior_weight=$pw \
     $models_pcx \
     $models_px \

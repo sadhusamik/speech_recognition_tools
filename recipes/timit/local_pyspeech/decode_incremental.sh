@@ -13,19 +13,15 @@ feat_type=mfcc
 hmm_dir=exp/tri3
 test_set=test
 train_set=train
-nn_name=nnet_gru_3lenc_1lclas_1lae_256nodes
+
 pw=0.2
 num_threads=8
-model_iter=
-model_override=
 append=
 score_script=score.sh
-override_cmvn=
-override_model=
 override_egs_config=
-compute_cmvn=false
-override_prior=
-ae_type=normal
+priors=prior
+task_prior="0.33,0.33,0.33"
+
 # Decoder parameters
 min_active=200
 max_active=700
@@ -35,6 +31,10 @@ acwt=0.2
 remove_ll=true # Remove loglikelihood directory after decoding 
 
 . utils/parse_options.sh 
+
+echo "$@"
+models_pcx=$1
+models_px=$2
 
 thread_string=
 [ $num_threads -gt 1 ] && thread_string="-parallel --num-threads=$num_threads"
@@ -65,56 +65,32 @@ if [ $stage -le 0 ]; then
     egs_config_file=$hybrid_dir/egs/${train_set}/egs.config
   fi
 
-  if [ ! -z $override_priors ]; then
-    echo "$0: Overriding prior file" 
-    prior_file=$override_priors
-  else
-    prior_file=$hybrid_dir/priors
-  fi
+  prior_file=$priors
+
   split_scp=""
   for n in `seq $nj`; do 
     split_scp="$split_scp $log_dir/${test_set}.$n.scp"
   done
   utils/split_scp.pl $data_dir/$test_set/feats.scp $split_scp || exit 1;
 
-  if [ -z $model_iter ] ; then
-    echo "$0: Choosing best model"
-    model="$hybrid_dir/$nn_name/exp_1.dir/final.mdl"
-  else
-    echo "$0: Choosing model at epoch $model_iter"
-    model="$hybrid_dir/$nn_name/exp_1.dir/exp_1__epoch_${model_iter}.model"
-   fi
-  if [ -z $override_model ]; then 
-    echo "$0: Using model $model"
-  else
-    model=$override_model
-    echo "$0: Overriding with model $model"
-  fi
-  
-
-  if [ ! -z $override_prior ]; then 
-    echo "$0: Overriding prior with given file"
-    prior_file=$override_prior
-  else
-    echo "$0: Using prior from $hybrid_dir"
-    prior_file=$hybrid_dir/priors
-  fi
-
   queue.pl --mem 10G JOB=1:$nj \
     $log_dir/compute_llikelihood_${test_set}.JOB.log \
-    python3 $nnet_src/dump_genclassifier_outputs.py $add_opts \
-    --ae_type=$ae_type \
-    --prior=$prior_file \
+    python3 $nnet_src/compute_incremental_likelihood.py $add_opts \
     --prior_weight=$pw \
-    $model \
+    $models_pcx \
+    $models_px \
     $log_dir/${test_set}.JOB.scp \
     $egs_config_file \
+    $prior_file \
+    $task_prior \
     $ll_dir/$test_set.JOB.ll || exit 1;
-   
+
+fi
+
   for n in `seq $nj`; do
    cat $ll_dir/$test_set.$n.ll.scp 
   done > $ll_dir/all_llhoods
-fi
+
 
 if [ $stage -le 1 ]; then 
   echo "$0: Make graph and Decode " 
