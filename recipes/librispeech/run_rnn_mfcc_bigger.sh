@@ -117,7 +117,7 @@ if [ $stage -le 3 ]; then
       --feature_dim 13 || exit 1 ;
 fi
 
-exit 
+exit
 if [ $stage -le 4 ]; then 
 
   echo " Train posterior VAE-PM for LIBRI "
