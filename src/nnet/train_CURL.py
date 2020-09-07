@@ -76,6 +76,7 @@ def get_args():
     parser.add_argument("--hidden_dim", default=512, type=int, help="Number of hidden nodes")
     parser.add_argument("--bn_dim", default=60, type=int, help="Bottle neck dim")
     parser.add_argument("--comp_num", default=20, type=int, help="Number of GMM components")
+    parser.add_argument("--time_shift", default=3, type=int, help="Time shift for predictive CURL")
 
     # Training configuration
     parser.add_argument("--optimizer", default="adam", type=str,

@@ -79,6 +79,7 @@ def get_args():
     parser.add_argument("--bn_dim", default=60, type=int, help="Bottle neck dim")
     parser.add_argument("--comp_num", default=20, type=int, help="Number of GMM components")
     parser.add_argument("--num_classes", default=20, type=int, help="Number of output classes")
+    parser.add_argument("--time_shift", default=3, type=int, help="Time shift for predictive CURL")
 
     # Training configuration
     parser.add_argument("--optimizer", default="adam", type=str,
@@ -227,7 +228,8 @@ def run(config):
             optimizer.zero_grad()
 
             # Main forward pass
-            class_out, ae_out, latent_out = model(batch_x, batch_l)
+            batch_l = batch_l - config.time_shift
+            class_out, ae_out, latent_out = model(batch_x[:, :-config.time_shift, :], batch_l)
 
             # Keep only on-zero label rows for label and class_out
             nonzero_idx = []
@@ -239,11 +241,11 @@ def run(config):
             class_out = class_out[nonzero_idx]
 
             # Convert all the weird tensors to frame-wise form
-            batch_x = pad2list(batch_x, batch_l)
+            batch_x = pad2list(batch_x[:, config.time_shift:, :], batch_l)
             ae_out = pad2list3d(ae_out, batch_l)
             if nonzero_idx.nelement() != 0:
                 class_out = pad2list(class_out, batch_l)
-                lab = pad2list(lab, batch_l)
+                lab = pad2list(lab[:, :-config.time_shift], batch_l)
 
             latent_out = (
                 pad2list(latent_out[0], batch_l), pad2list3d(latent_out[1], batch_l),
@@ -297,13 +299,14 @@ def run(config):
                     batch_l = Variable(batch_l[indices])
                     lab = Variable(lab[indices])
 
+                batch_l = batch_l - config.time_shift
                 # Main forward pass
-                class_out, ae_out, latent_out = model(batch_x, batch_l)
+                class_out, ae_out, latent_out = model(batch_x[:, :-config.time_shift, :], batch_l)
 
                 # Convert all the weird tensors to frame-wise form
-                batch_x = pad2list(batch_x, batch_l)
+                batch_x = pad2list(batch_x[:, config.time_shift:, :], batch_l)
                 class_out = pad2list(class_out, batch_l)
-                lab = pad2list(lab, batch_l)
+                lab = pad2list(lab[:, :-config.time_shift], batch_l)
                 ae_out = pad2list3d(ae_out, batch_l)
                 latent_out = (pad2list(latent_out[0], batch_l), pad2list3d(latent_out[1], batch_l),
                               pad2list3d(latent_out[2], batch_l))
@@ -323,10 +326,10 @@ def run(config):
 
         # Manage learning rate and revert model
         if epoch_i == 0:
-            err_p = -np.mean(val_curl_losses)
+            err_p = np.mean(val_losses)
             best_model_state = model.state_dict()
         else:
-            if -np.mean(val_curl_losses) > (100 - config.lr_tol) * err_p / 100:
+            if np.mean(val_losses) > (100 - config.lr_tol) * err_p / 100:
                 logging.info(
                     "Val loss went up, Changing learning rate from {:.6f} to {:.6f}".format(lr, config.lrr * lr))
                 lr = config.lrr * lr
@@ -334,7 +337,7 @@ def run(config):
                     param_group['lr'] = lr
                 model.load_state_dict(best_model_state)
             else:
-                err_p = -np.mean(val_curl_losses)
+                err_p = np.mean(val_losses)
                 best_model_state = model.state_dict()
 
         print_log = "Epoch: {:d} ((lr={:.6f})) Tr CURL Log-likelihood: {:.3f} || Tr Loss: {:.3f} || Tr FER: {:.3f} :: Val CURL Log-likelihood: {:.3f} || Val Loss: {:.3f} || Val FER: {:.3f}".format(
@@ -355,6 +358,7 @@ def run(config):
             'hidden_dim': config.hidden_dim,
             'hidden_dim_classifier': config.hidden_dim_classifier,
             'comp_num': config.comp_num,
+            'time_shift': config.time_shift,
             'num_classes': config.num_classes,
             'bn_dim': config.bn_dim,
             'ep_curl_tr': ep_curl_tr,

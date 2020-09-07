@@ -28,6 +28,25 @@ class nnetFeedforward(nn.Module):
         return embeds, self.layers[-1](inputs)
 
 
+class nnetLinearWithConv(nn.Module):
+
+    def __init__(self, input_size, num_layers, hidden_size, out_size):
+        super(nnetLinearWithConv, self).__init__()
+        input_sizes = [input_size] + [hidden_size] * (num_layers - 1)
+        output_sizes = [hidden_size] * (num_layers - 1) + [out_size]
+        self.layers = nn.ModuleList(
+            [nn.Conv1d(in_channels=in_size, out_channels=out_size, kernel_size=1, stride=1) for (in_size, out_size) in
+             zip(input_sizes, output_sizes)])
+        self.relu = nn.ReLU()
+
+    def forward(self, inputs, lengths):
+        inputs = torch.transpose(inputs, 1, 2)
+        for i, layer in enumerate(self.layers[:-1]):
+            inputs = self.relu(layer(inputs))
+        inputs = self.layers[-1](inputs)
+
+        return torch.transpose(inputs, 1, 2)
+
 class nnetRNN(nn.Module):
 
     def __init__(self, input_size, num_layers, hidden_size, out_size, dropout):
@@ -268,7 +287,7 @@ class VAEEncoder(nn.Module):
 
         means = self.means(torch.transpose(inputs, 1, 2))
         vars = self.vars(torch.transpose(inputs, 1, 2))
-        return torch.transpose(means, 1, 2), torch.transpose(vars, 1, 2)
+        return torch.transpose(means, 1, 2), torch.transpose(vars, 1, 2), inputs
 
 
 class VAEDecoder(nn.Module):
@@ -341,6 +360,24 @@ class nnetVAE(nn.Module):
         latent = self.vae_encoder(inputs, lengths)
         inputs = self.sampler(latent)
         return self.vae_decoder(inputs, lengths), latent
+
+
+class nnetARVAE(nn.Module):
+    def __init__(self, input_size, num_layers_enc, num_layers_dec, hidden_size, bn_size,
+                 dropout, num_outs, use_gpu=True):
+        super(nnetARVAE, self).__init__()
+        self.num_outs = num_outs
+        self.vae_encoder = VAEEncoder(input_size, num_layers_enc, hidden_size, bn_size, dropout)
+        decoders = []
+        for i in range(num_outs):
+            decoders.append(VAEDecoder(bn_size, num_layers_dec, hidden_size, input_size))
+        self.vae_decoder = torch.nn.ModuleList(decoders)
+        self.sampler = latentSampler(use_gpu)
+
+    def forward(self, inputs, lengths):
+        latent = self.vae_encoder(inputs, lengths)
+        inputs = self.sampler(latent)
+        return torch.cat([self.vae_decoder[i](inputs, lengths)[None, :] for i in range(self.num_outs)]), latent
 
 
 class VAEEncodedClassifier(nn.Module):
