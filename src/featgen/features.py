@@ -1,4 +1,3 @@
-
 """
 Utility functions for feature computation
 
@@ -21,6 +20,7 @@ def get_kaldi_ark(feat_dict, outfile, kaldi_cmd='copy-feats'):
     subprocess.run(cmd, shell=True)
     os.remove(outfile + '.txt')
 
+
 def add_noise_to_wav(sig, noise, snr):
     rand_num = int(np.floor(np.random.rand() * (len(noise) - len(sig))))
     ns = noise[rand_num:rand_num + len(sig)]
@@ -29,6 +29,7 @@ def add_noise_to_wav(sig, noise, snr):
     alp = np.sqrt(E_s / (E_n * (10 ** (snr / 10))))
 
     return sig + alp * ns
+
 
 def load_noise(noise_type):
     noise_file = "noises/" + noise_type + ".wav"
@@ -136,15 +137,16 @@ def getFrames(signal, srate, frate, flength, window):
     if flength_samples % 2 == 0:
         sp_b = int(flength_samples / 2) - 1
         sp_f = int(flength_samples / 2)
-        extend = int(flength_samples / 2)
+        extend = int(flength_samples / 2) - 1
     else:
         sp_b = int((flength_samples - 1) / 2)
         sp_f = int((flength_samples - 1) / 2)
         extend = int((flength_samples - 1) / 2)
 
-    sig_padded = np.pad(signal, extend, 'reflect')
+    # sig_padded = np.pad(signal, extend, 'reflect')
+    sig_padded = signal
     win = window(flength_samples)
-    idx = sp_b;
+    idx = sp_b
 
     while (idx + sp_f) < len(sig_padded):
         frame = sig_padded[idx - sp_b:idx + sp_f + 1]

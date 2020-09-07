@@ -19,6 +19,7 @@ def get_args():
     parser = argparse.ArgumentParser('Extract Mel Energy Features')
     parser.add_argument('scp', help='"scp" list')
     parser.add_argument('outfile', help='output file')
+    parser.add_argument("--spectrum_type", default="log", help="log/power For log spectrum or energy spectrum")
     parser.add_argument('--nfilters', type=int, default=23, help='number of filters (30)')
     parser.add_argument('--fduration', type=float, default=0.02, help='Window length (0.02 sec)')
     parser.add_argument('--frate', type=int, default=100, help='Frame rate (100 Hz)')
@@ -52,6 +53,7 @@ def compute_mel_spectrum(args, srate=16000,
         rir = rir / np.power(2, 15)
     else:
         print('%s: No reverberation added!' % sys.argv[0])
+    print("Using spectrum type {}".format(args.spectrum_type))
 
     with open(wavs, 'r') as fid:
 
@@ -82,8 +84,15 @@ def compute_mel_spectrum(args, srate=16000,
             time_frames = np.array([frame for frame in
                                     getFrames(signal, srate, frate, fduration, window)])
 
-            melEnergy_frames = np.log10(
-                np.matmul(np.abs(fft(time_frames, int(nfft / 2 + 1), axis=1)), np.transpose(fbank)))
+            if args.spectrum_type == "log":
+                melEnergy_frames = np.log10(
+                    np.matmul(np.abs(fft(time_frames, int(nfft / 2 + 1), axis=1)), np.transpose(fbank)))
+            elif args.spectrum_type == "power":
+                melEnergy_frames = np.power(
+                    np.matmul(np.abs(fft(time_frames, int(nfft / 2 + 1), axis=1)), np.transpose(fbank)), 2)
+            else:
+                print("Spectrum type not supported! ")
+                sys.exit(1)
 
             all_feats[uttid] = melEnergy_frames
 
