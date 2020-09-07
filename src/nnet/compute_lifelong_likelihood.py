@@ -48,8 +48,8 @@ def get_args():
     parser.add_argument("models_px", help="All the likelihood models")
     parser.add_argument("scp", help="scp files for features")
     parser.add_argument("egs_config", help="config file for generating examples")
-    parser.add_argument("prior",
-                        help="Provide prior to normalize and get likelihoods, dp/mm/lowent prior with commans ")
+    parser.add_argument("priors",
+                        help="Provide prior to normalize and get likelihoods, dp/mm/lowent prior with commas ")
     parser.add_argument("task_prior", help="Provide prior for every task")
     parser.add_argument("save_file", help="file to save posteriors")
     parser.add_argument("--prior_weight", type=float, default=0.8, help="Weight for the prior distribution")
@@ -108,7 +108,9 @@ def get_output(config):
         cmd += " splice-feats --left-context={:s} --right-context={:s} ark:- ark:- |".format(context[0], context[1])
 
     # Load prior
-    prior = pickle.load(open(config.prior, 'rb'))
+    priors = config.priors.split(',')
+    priors = [pickle.load(open(f, 'rb')) for f in priors]
+
     if config.task_prior == "mm":
         print("using mm-measure based task priors")
     elif config.task_prior == "dp":
@@ -122,6 +124,7 @@ def get_output(config):
     post_dict = {}
     for utt_id, mat in kaldi_io.read_mat_ark(cmd):
         post = np.zeros((mat.shape[0], num_classes))
+        prior_acc = np.zeros(num_classes)
         mat = Variable(torch.FloatTensor(mat))[None, :, :]
         batch_l = Variable(torch.IntTensor([mat.size(1)]))
         px_save = []
@@ -139,7 +142,8 @@ def get_output(config):
             pcx = sm(out[0, :, :])
             px = np.tile(px, (pcx.shape[1], 1)).T
             all_pcx.append(pcx.data.numpy())
-            all_px.append(px)
+            all_px.append(np.ones(px.shape))
+
             if config.task_prior == "mm":
                 mm = mmeasure_loss(pcx).item()
                 all_tp.append(mm)
@@ -154,14 +158,14 @@ def get_output(config):
                 all_tp.append(task_prior[idx])
 
         if config.task_prior == "mm":
-            all_tp = np.asarray(all_tp)
+            all_tp = np.asarray(all_tp, dtype=np.float64)
             all_tp = np.exp(all_tp) / np.sum(np.exp(all_tp))
             if np.isnan(all_tp[0]):
                 print("Switching to uniform priors")
                 all_tp = np.ones(num_domains) / num_domains
         elif config.task_prior == "dp":
-            all_tp = np.asarray(all_tp)
-            all_tp = np.exp(200 * all_tp) / np.sum(np.exp(200 * all_tp))
+            all_tp = np.asarray(all_tp, dtype=np.float64)
+            all_tp = np.exp(300 * all_tp) / np.sum(np.exp(300 * all_tp))
         elif config.task_prior == "lowent":
             all_tp = np.asarray(all_tp)
             all_tp = np.exp(all_tp) / np.sum(np.exp(all_tp))
@@ -169,19 +173,20 @@ def get_output(config):
                 print("Switching to uniform priors")
                 all_tp = np.ones(num_domains) / num_domains
             all_tp_2 = np.asarray(all_tp_2)
-            all_tp_2 = np.exp(200 * all_tp_2) / np.sum(np.exp(200 * all_tp_2))
+            all_tp_2 = np.exp(300 * all_tp_2) / np.sum(np.exp(300 * all_tp_2))
+            print('Entropy dp:{:.2f} and Entropy mm:{:.2f}'.format(entropy(all_tp_2), entropy(all_tp)))
             if entropy(all_tp_2) < entropy(all_tp):
                 all_tp = all_tp_2
-
         for idx, pcx in enumerate(all_pcx):
             post += pcx * all_px[idx] * all_tp[idx]
+            prior_acc += np.exp(priors[idx]) * all_tp[idx]
 
         print_log = ""
         for ii, x in enumerate(px_save):
             print_log += "p(x) for Task {:d} ={:.6f} with prior ={:.6f} ".format(ii, x, all_tp[ii])
         print(print_log)
         sys.stdout.flush()
-        post_dict[utt_id] = np.log(post) - config.prior_weight * prior
+        post_dict[utt_id] = np.log(post) - config.prior_weight * np.log(prior_acc)
 
     return post_dict
 
