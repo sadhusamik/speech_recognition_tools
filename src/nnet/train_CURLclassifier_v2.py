@@ -286,9 +286,6 @@ def run(config):
 
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip_thresh)
             optimizer.step()
-            print_log = "Sub Epoch(Train): {:d} ((lr={:.6f})) CURL Log-likelihood: {:.3f} || Tr Loss: {:.3f} || Tr FER: {:.3f}".format(epoch_i + 1, lr, loss.item(), loss_class.item(), tr_fer[-1])
-            logging.info(print_log)
-            sys.stdout.flush()
 
         ep_curl_tr.append(np.mean(train_curl_losses))
         ep_loss_tr.append(np.mean(train_losses))
@@ -338,9 +335,6 @@ def run(config):
                 val_fer.append(compute_fer(class_out.cpu().data.numpy(), lab.cpu().data.numpy()))
             else:
                 val_fer.append(compute_fer(class_out.data.numpy(), lab.data.numpy()))
-            print_log = "Sub Epoch(Val): {:d} ((lr={:.6f})) CURL Log-likelihood: {:.3f} || Tr Loss: {:.3f} || Tr FER: {:.3f}".format(epoch_i + 1, lr, loss.item(), loss_class.item(), val_fer[-1])
-            logging.info(print_log)
-            sys.stdout.flush()
 
         ep_curl_dev.append(np.mean(val_curl_losses))
         ep_loss_dev.append(np.mean(val_losses))
@@ -368,7 +362,7 @@ def run(config):
 
         logging.info(print_log)
         sys.stdout.flush()
-        
+
         if (epoch_i + 1) % config.model_save_interval == 0:
             model_path = os.path.join(model_dir, config.experiment_name + '__epoch_%d' % (epoch_i + 1) + '.model')
         torch.save({
