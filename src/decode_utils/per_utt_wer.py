@@ -21,8 +21,8 @@ def run(config):
     for utt in r:
         if utt:
             details = utt.split()
-            wer_dict[details[0]] = (float(details[3]) + float(details[4]) + float(details[5])) * 100 / (
-                        float(details[2]) + float(details[3]) + float(details[5]))
+            wer_dict[details[0]] = [(float(details[3]) + float(details[4]) + float(details[5])) * 100 / (
+                        float(details[2]) + float(details[3]) + float(details[5])), float(details[2]), float(details[3]), float(details[4]), float(details[5])]
 
     return wer_dict
 

@@ -7,6 +7,9 @@ import numpy as np
 
 
 class nnetFeedforward(nn.Module):
+    """
+    Simple linear feedfoward classification network
+    """
 
     def __init__(self, input_size, num_layers, hidden_size, out_size):
         super(nnetFeedforward, self).__init__()
@@ -47,7 +50,11 @@ class nnetLinearWithConv(nn.Module):
 
         return torch.transpose(inputs, 1, 2)
 
+
 class nnetRNN(nn.Module):
+    """
+    RNN classification network
+    """
 
     def __init__(self, input_size, num_layers, hidden_size, out_size, dropout):
         super(nnetRNN, self).__init__()
@@ -348,6 +355,10 @@ class nnetVAEClassifier(nn.Module):
 
 
 class nnetVAE(nn.Module):
+    """
+        A Variational Autoencoder (VAE) implementation in pyTorch
+    """
+
     def __init__(self, input_size, num_layers_enc, num_layers_dec, hidden_size, bn_size,
                  dropout, use_gpu=True):
         super(nnetVAE, self).__init__()
@@ -441,14 +452,14 @@ class curlEncoder(nn.Module):
         self.comp_num = comp_num
 
         self.means = nn.ModuleList(
-            [nn.Conv1d(in_channels=hidden_size, out_channels=bn_size, kernel_size=1, stride=1) for i in
+            [nn.Linear(in_features=hidden_size, out_features=bn_size) for i in
              range(comp_num)])
 
         self.var = nn.ModuleList(
-            [nn.Conv1d(in_channels=hidden_size, out_channels=bn_size, kernel_size=1, stride=1) for i in
+            [nn.Linear(in_features=hidden_size, out_features=bn_size) for i in
              range(comp_num)])
 
-        self.categorical = nn.Conv1d(in_channels=hidden_size, out_channels=comp_num, kernel_size=1, stride=1)
+        self.categorical = nn.Linear(in_features=hidden_size, out_features=comp_num)
         self.sm = nn.Softmax(dim=2)
 
     def forward(self, inputs, lengths):
@@ -460,11 +471,9 @@ class curlEncoder(nn.Module):
 
         inputs, _ = pad_packed_sequence(inputs, True, total_length=seq_len)
 
-        return self.sm(torch.transpose(self.categorical(torch.transpose(inputs, 1, 2)), 1, 2)), torch.cat(
-            [torch.transpose(self.means[i](torch.transpose(inputs, 1, 2)), 1, 2)[None, :] for i in
-             range(self.comp_num)]), torch.cat(
-            [torch.transpose(self.var[i](torch.transpose(inputs, 1, 2)), 1, 2)[None, :] for i in
-             range(self.comp_num)])
+        return self.sm(self.categorical(inputs)), torch.cat(
+            [self.means[i](inputs)[None, :] for i in range(self.comp_num)]), torch.cat(
+            [self.var[i](inputs)[None, :] for i in range(self.comp_num)])
 
 
 class curlDecoder(nn.Module):
@@ -478,7 +487,7 @@ class curlDecoder(nn.Module):
             [nn.GRU(input_size=in_size, hidden_size=out_size, batch_first=True) for (in_size, out_size) in
              zip(input_sizes, output_sizes)])
 
-        self.means = nn.Conv1d(in_channels=hidden_size, out_channels=input_size, kernel_size=1, stride=1)
+        self.means = nn.Linear(in_features=hidden_size, out_features=input_size)
 
     def forward(self, all_inputs, lengths):
         outs = []
@@ -491,8 +500,38 @@ class curlDecoder(nn.Module):
 
             inputs, _ = pad_packed_sequence(inputs, True, total_length=seq_len)
 
-            means = self.means(torch.transpose(inputs, 1, 2))
-            outs.append(torch.transpose(means, 1, 2)[None, :])
+            means = self.means(inputs)
+            outs.append(means[None, :])
+        return torch.cat(outs)
+
+
+class curlDecoderMultistream(nn.Module):
+    def __init__(self, bn_size, num_streams, num_layers, hidden_size, input_size):
+        super(curlDecoderMultistream, self).__init__()
+
+        input_sizes = [bn_size] + [hidden_size] * (num_layers - 1)
+        output_sizes = [hidden_size] * num_layers
+
+        self.layers = nn.ModuleList([nn.ModuleList(
+            [nn.GRU(input_size=in_size, hidden_size=out_size, batch_first=True) for (in_size, out_size) in
+             zip(input_sizes, output_sizes)]) for i in range(num_streams)])
+
+        self.means = nn.ModuleList(
+            [nn.Linear(in_features=hidden_size, out_features=input_size) for i in range(num_streams)])
+
+    def forward(self, all_inputs, lengths):
+        outs = []
+        for idx, inputs in enumerate(all_inputs):
+            seq_len = inputs.size(1)
+            inputs = pack_padded_sequence(inputs, lengths, True)
+
+            for i, layer in enumerate(self.layers[idx]):
+                inputs, _ = layer(inputs)
+
+            inputs, _ = pad_packed_sequence(inputs, True, total_length=seq_len)
+
+            means = self.means[idx](inputs)
+            outs.append(means[None, :])
         return torch.cat(outs)
 
 
@@ -527,21 +566,65 @@ class nnetCurlSupervised(nn.Module):
         return self.curl_decoder(sampled, lengths), latent
 
 
-class nnetCurlClassifier(nn.Module):
+class nnetCurlMultistreamClassifier(nn.Module):
     def __init__(self, input_size, num_layers_enc, num_layers_dec, num_layers_class, hidden_size,
-                 hidden_size_classifier, bn_size, comp_num, out_size, use_gpu=True):
-        super(nnetCurlClassifier, self).__init__()
+                 hidden_size_classifier, bn_size, comp_num, out_size, use_gpu=True, enc_scale=0.2):
+        super(nnetCurlMultistreamClassifier, self).__init__()
+
+        self.comp_num = comp_num
+        self.input_size = input_size
+        self.out_size = out_size
+        self.num_layers_enc = num_layers_enc
+        self.num_layers_dec = num_layers_dec
+        self.num_layers_class = num_layers_class
+        self.hidden_size = hidden_size
+        self.hidden_size_classifier = hidden_size_classifier
+        self.enc_scale = enc_scale
 
         self.curl_encoder = curlEncoder(input_size, num_layers_enc, hidden_size, bn_size, comp_num)
-        self.curl_decoder = curlDecoder(bn_size, num_layers_dec, hidden_size, input_size)
+        self.curl_decoder = curlDecoderMultistream(bn_size, comp_num, num_layers_dec, hidden_size, input_size)
         self.curl_sampler = curlLatentSampler(use_gpu)
-        self.classifier = decoderRNN(bn_size, num_layers_class, hidden_size_classifier, out_size)
+
+        self.classifier = nn.ModuleList(
+            [decoderRNN(bn_size, num_layers_class, hidden_size_classifier, out_size) for i in range(self.comp_num)])
         self.use_gpu = use_gpu
+
+    def expand_component(self):
+        self.comp_num = self.comp_num + 1
+
+        # Add extra Gaussian
+        self.curl_encoder.means.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size))
+        self.curl_encoder.var.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size))
+        updated_y = nn.Linear(in_features=self.hidden_size, out_features=self.comp_num)
+        updated_y.weight[0:self.comp_num - 1, :] = self.categorical.weight
+        self.categorical = updated_y
+
+        # Add extra reconstruction and classifier decoders
+        input_sizes = [self.bn_size] + [self.hidden_size] * (self.num_layers_dec - 1)
+        output_sizes = [self.hidden_size] * self.num_layers_dec
+        self.curl_decoder.layers.append(nn.ModuleList(
+            [nn.GRU(input_size=in_size, hidden_size=out_size, batch_first=True) for (in_size, out_size) in
+             zip(input_sizes, output_sizes)]))
+        self.curl_decoder.means.append(nn.Linear(in_features=self.hidden_size, out_features=self.input_size))
+
+        self.classifier.append(
+            decoderRNN(self.bn_size, self.num_layers_class, self.hidden_size_classifier, self.out_size))
 
     def forward(self, inputs, lengths):
         latent = self.curl_encoder(inputs, lengths)
-        return self.classifier(compute_latent_features(latent, self.use_gpu), lengths), \
-               self.curl_decoder(self.curl_sampler(latent), lengths), latent
+        # Scale the gradients
+
+        #h1 = latent[0].register_hook(lambda grad: grad * self.enc_scale)
+        #h2 = latent[1].register_hook(lambda grad: grad * self.enc_scale)
+        #h3 = latent[2].register_hook(lambda grad: grad * self.enc_scale)
+
+        sampled_latent = self.curl_sampler(latent)
+        class_out = []
+
+        for idx, stream in enumerate(self.classifier):
+            class_out.append(stream(sampled_latent[idx], lengths))
+
+        return class_out, self.curl_decoder(sampled_latent, lengths), latent
 
 
 def compute_latent_features(latent, use_gpu=True):

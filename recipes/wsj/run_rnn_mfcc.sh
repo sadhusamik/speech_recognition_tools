@@ -118,7 +118,7 @@ if [ $stage -le 3 ]; then
 
   echo " Train p(x| data) model for WSJ "
     local_pyspeech/train_VAE.sh \
-      --stage 0 \
+      --stage 1 \
       --use_gpu  true \
       --per_utt_cmvn true \
       --data_dir data \
@@ -141,7 +141,6 @@ if [ $stage -le 3 ]; then
       --feature_dim 13 || exit 1 ;
 fi
 
-exit 0;
 
 if [ $stage -le 4 ]; then 
 
