@@ -41,7 +41,7 @@ def load_noise(noise_type):
         print("Noise file " + noise_file + " not found!")
         os.exit(1)
 
-    return noise / np.power(2, 15)
+    return noise  # / np.power(2, 15)
 
 
 def add_agwn(sig, noise, snr):
@@ -143,8 +143,8 @@ def getFrames(signal, srate, frate, flength, window):
         sp_f = int((flength_samples - 1) / 2)
         extend = int((flength_samples - 1) / 2)
 
-    # sig_padded = np.pad(signal, extend, 'reflect')
-    sig_padded = signal
+    sig_padded = np.pad(signal, extend, 'reflect')
+    # sig_padded = signal
     win = window(flength_samples)
     idx = sp_b
 
@@ -169,12 +169,12 @@ def spliceFeats(feats, context):
     return spliced_feats
 
 
-def createFbank(nfilters, nfft, srate):
-    mel_max = 2595 * np.log10(1 + srate / 1400)
+def createFbank(nfilters, nfft, srate, warp_fact=1):
+    mel_max = 2595 * np.log10(1 + (srate / warp_fact) / 1400)
     fwarped = np.linspace(0, mel_max, nfilters + 2)
 
     mel_filts = np.zeros((nfilters, int(np.floor(nfft / 2 + 1))))
-    hz_points = (700 * (10 ** (fwarped / 2595) - 1))
+    hz_points = warp_fact * (700 * (10 ** (fwarped / 2595) - 1))
     bin = np.floor((nfft + 1) * hz_points / srate)
 
     for m in range(1, nfilters + 1):
@@ -188,6 +188,35 @@ def createFbank(nfilters, nfft, srate):
             mel_filts[m - 1, k] = (bin[m + 1] - k) / (bin[m + 1] - bin[m])
 
     return mel_filts
+
+
+def warp_func_bark(x, warp_fact=1):
+    return 6 * np.arcsinh((x / warp_fact) / 600)
+
+
+def createFbankCochlear(nfilters, nfft, srate, om_w=0.2, alp=2.5, fixed=1, bet=2.5, warp_fact=1):
+    f_max = srate / 2
+    warped_max = warp_func_bark(f_max, warp_fact)
+    fwarped_cf = np.linspace(0, warped_max, nfilters)
+    f_linear = np.linspace(0, f_max, int(np.floor(nfft / 2 + 1)))
+    f_warped = warp_func_bark(f_linear, warp_fact)
+    filts = np.zeros((nfilters, int(np.floor(nfft / 2 + 1))))
+    alp_c = alp
+    for i in range(nfilters):
+        fc = fwarped_cf[i]
+        if fixed == 1:
+            alp = alp_c
+        else:
+            alp = alp_c * np.exp(-0.1 * fc)
+        for j, fw in enumerate(f_warped):
+            if fw - fc <= -om_w / 2:
+                filts[i, j] = np.power(10, alp * (fw - fc + om_w / 2))
+            elif fw - fc > -om_w / 2 and fw - fc < om_w / 2:
+                filts[i, j] = 1
+            else:
+                filts[i, j] = np.power(10, -bet * (fw - fc - om_w / 2))
+
+    return filts
 
 
 def computeLpcFast(signal, order):
@@ -209,7 +238,8 @@ def computeModSpecFromLpc(gg, xlpc, lim):
     lpc_cep = np.zeros(lim)
     lpc_cep[0] = np.log(np.sqrt(gg))
     lpc_cep[1] = xlpc[1]
-
+    if xlpc.shape[0] < lim:
+        xlpc = np.append(xlpc, np.zeros(int(lim - xlpc.shape[0] + 1)))
     for n in range(2, lim):
         aa = np.arange(1, n) / n
         bb = np.flipud(xlpc[1:n])
