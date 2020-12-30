@@ -5,18 +5,22 @@
 # Mel Spectrum options
 
 nj=100
-nfilters=15
-context=
-nfft=1024
-fduration=0.02
+nfilters=20
+fduration=0.5
+coeff_num=50
+coeff_range='0,30'
+order=50
+overlap_fraction=0.25
+add_reverb=clean
+add_noise=clean
+fbank_type="mel,1"
+gamma_weight="None"
+
 frate=100
 cmd=queue.pl
 add_opts=
 src_dir='../../src'
 spectrum_type=log
-add_noise=clean
-add_reverb=clean
-fbank_type="mel,1"
 write_utt2num_frames=false
 
 . parse_options.sh || exit 1;
@@ -48,42 +52,8 @@ echo $0": Splitting segment OR scp files for parallalization..."
 
 if [ -f $segment ]; then
 
- ## TODO: THIS PART IS NOT IMPLEMENTED YET! Do not extract features for segment files
-
-  echo $0": Splitting Segment files..."
-
-  split_segments=""
-  for n in $(seq $nj); do
-    split_segments="$split_segments $log_dir/segments.$n"
-  done
- utils/split_scp.pl $segment $split_segments || exit 1;
-
- echo $0": Computing Mel Spectral features for segment files..."
-
-  # Compute mfcc features
-
-  $cmd --mem 5G JOB=1:$nj \
-    $log_dir/feats_${name}.JOB.log \
-    python computeMelSpectrum.py \
-      $log_dir/wav_${name}.JOB.scp \
-      $feat_dir/mfcc_${name}.JOB \
-      $add_opts \
-      --spectrum_type=$spectrum_type \
-      --nfilters=$nfilters \
-      --nfft=$nfft \
-      --fduration=$fduration \
-      --frate=$frate \
-      --fbank_type=$fbank_type \
-      --kaldi_cmd=$ark_cmd || exit 1
-
-    # concatenate all scp files together
-
-    for n in $(seq $nj); do
-      cat $feat_dir/melspec_$name.$n.scp || exit 1;
-    done > $data_dir/feats.scp
-
-    rm $log_dir/wav_${name}.*.scp
-
+    ## TODO: THIS PART IS NOT IMPLEMENTED YET! Do not extract features for segment files
+    echo "Not Implemented"
 elif [ -f $scp ]; then
 
   echo "$0: Splitting scp files..."
@@ -95,23 +65,26 @@ elif [ -f $scp ]; then
 
   utils/split_scp.pl $scp $split_scp || exit 1;
 
-  echo "$0: Computing Mel Spectral features for scp files..."
+  echo "$0: Computing FDLP Spectral features for scp files..."
 
   # Compute mel spectrum features
 
     $cmd --mem 5G JOB=1:$nj \
       $log_dir/feats_${name}.JOB.log \
-      python ${src_dir}/featgen/computeMelSpectrum.py \
+      python ${src_dir}/featgen/computeFDLPSpectrogram.py \
         $log_dir/wav_${name}.JOB.scp \
         $feat_dir/melspec_${name}.JOB \
         $add_opts \
-        --spectrum_type=$spectrum_type \
-        --nfilters=$nfilters \
-        --nfft=$nfft \
-        --fduration=$fduration \
-        --add_noise=$add_noise \
-        --add_reverb=$add_reverb \
         --fbank_type=$fbank_type \
+        --gamma_weight=$gamma_weight \
+        --add_reverb=$add_reverb \
+        --add_noise=$add_noise \
+        --coeff_num=$coeff_num \
+        --coeff_range=$coeff_range \
+        --order=$order \
+        --overlap_fraction=$overlap_fraction \
+        --nfilters=$nfilters \
+        --fduration=$fduration \
         --frate=$frate  || exit 1
 
     # concatenate all scp files together

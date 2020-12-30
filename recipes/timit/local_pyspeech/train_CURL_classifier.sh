@@ -30,8 +30,9 @@ epochs=200
 comp_num=25
 num_classes=116
 model_save_interval=10
-weight_decay=0.001
+weight_decay=0
 per_utt_cmvn=false
+encoder_grad_scale=1
 
 # Feature config
 feature_dim=13
@@ -86,31 +87,61 @@ if [ $stage -le 0 ]; then
   done
 fi
 
+mkdir -p $hybrid_dir/$nn_name/exp_1.dir/
+
 if [ $stage -le 1 ]; then 
-  if $use_gpu; then 
-    $cuda_cmd --mem 10G \
-      $hybrid_dir/log/train_CURL_classifier_${nn_name}.log \
-      python3 $nnet_src/train_CURLclassifier_v2.py \
-      --use_gpu \
-      --train_set=$train_set \
-      --dev_set=$dev_set \
-      --encoder_num_layers=$encoder_num_layers \
-      --decoder_num_layers=$decoder_num_layers \
-      --classifier_num_layers=$classifier_num_layers \
-      --hidden_dim=$hidden_dim \
-      --hidden_dim_classifier=$hidden_dim_classifier \
-      --bn_dim=$bn_dim \
-      --comp_num=$comp_num \
-      --comp_label=$comp_label \
-      --num_classes=$num_classes \
-      --batch_size=$batch_size \
-      --epochs=$epochs \
-      --weight_decay=$weight_decay \
-      --feature_dim=$feature_dim \
-      --model_save_interval=$model_save_interval \
-      --experiment_name=exp_1 \
-      $hybrid_dir/egs \
-      $hybrid_dir/$nn_name || exit 1;
+  if $use_gpu; then
+    epoch_ct=`ls $hybrid_dir/$nn_name/exp_1.dir/ | cut -d'.' -f1 | cut -d'_' -f5 | sort -n | tail -n1`
+
+    if [ -z $epoch_ct ] ; then
+        epoch_ct=0;
+        load_checkpoint="None"
+    else
+        load_checkpoint=$hybrid_dir/$nn_name/exp_1.dir/exp_1__epoch_$epoch_ct.model
+    fi
+    echo "BABYSITTER: Starting training from epoch $epoch_ct"
+
+    try=0
+    while [ $epoch_ct -lt $((epochs-1)) ]; do
+        $cuda_cmd --mem 5G \
+          $hybrid_dir/log/train_CURL_classifier_${nn_name}_startingEpoch${epoch_ct}_try$try.log \
+          python3 $nnet_src/train_CURLclassifier_v2.py \
+          --use_gpu \
+          --train_set=$train_set \
+          --dev_set=$dev_set \
+          --encoder_num_layers=$encoder_num_layers \
+          --decoder_num_layers=$decoder_num_layers \
+          --classifier_num_layers=$classifier_num_layers \
+          --hidden_dim=$hidden_dim \
+          --hidden_dim_classifier=$hidden_dim_classifier \
+          --bn_dim=$bn_dim \
+          --comp_num=$comp_num \
+          --comp_label=$comp_label \
+          --num_classes=$num_classes \
+          --batch_size=$batch_size \
+          --epochs=$epochs \
+          --weight_decay=$weight_decay \
+          --encoder_grad_scale=$encoder_grad_scale \
+          --feature_dim=$feature_dim \
+          --model_save_interval=$model_save_interval \
+          --load_checkpoint=$load_checkpoint \
+          --experiment_name=exp_1 \
+          $hybrid_dir/egs \
+          $hybrid_dir/$nn_name
+        try=$((try+1))
+
+        epoch_ct=`ls $hybrid_dir/$nn_name/exp_1.dir/ | cut -d'.' -f1 | cut -d'_' -f5 | sort -n | tail -n1`
+        if [ -z $epoch_ct ] ; then epoch_ct=0; fi
+        echo "BABYSITTER: Exited training at epoch $epoch_ct, will restart from here"
+        load_checkpoint=$hybrid_dir/$nn_name/exp_1.dir/exp_1__epoch_$epoch_ct.model
+    done
+
+    epoch_ct=`ls $hybrid_dir/$nn_name/exp_1.dir/ | cut -d'.' -f1 | cut -d'_' -f5 | sort -n | tail -n1`
+    if [ -z $epoch_ct ] ; then epoch_ct=0; fi
+    if [ $epoch_ct -lt $((epochs-1)) ]; then
+        exit 1;
+    fi
+
   else
 
     queue.pl --mem 10G \
