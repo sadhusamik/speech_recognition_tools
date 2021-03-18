@@ -166,7 +166,7 @@ def get_output(config):
             perf_mon = 1
 
             for b in st:
-                num_prod *= np.power(all_pcx[b], all_tp[b])
+                num_prod *= all_pcx[b] # np.power(all_pcx[b], all_tp[b])
 
                 perf_mon *= all_tp[b]
                 denom_prod *= np.exp(priors[b])

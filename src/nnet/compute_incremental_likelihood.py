@@ -42,7 +42,7 @@ def mmeasure_loss(X, del_list=[5, 25, 45, 65], use_gpu=False):
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description="Dump likelihoods or posteriors from a genclassifier model")
+    parser = argparse.ArgumentParser(description="Dump incremental likelihood")
 
     parser.add_argument("models_pcx", help="All the nnet models")
     parser.add_argument("models_px", help="All the likelihood models")
@@ -52,8 +52,6 @@ def get_args():
                         help="Provide prior to normalize and get likelihoods, dp/mm/lowent prior with commas ")
     parser.add_argument("task_prior", help="Provide prior for every task")
     parser.add_argument("save_file", help="file to save posteriors")
-    parser.add_argument("--stream_selection", action="store_true",
-                        help="Set to use stream selection rather than stream fusion")
     parser.add_argument("--prior_weight", type=float, default=0.8, help="Weight for the prior distribution")
     parser.add_argument("--override_trans", default=None, help="Provide a different feature transformation file")
     return parser.parse_args()
@@ -126,7 +124,6 @@ def get_output(config):
     post_dict = {}
     for utt_id, mat in kaldi_io.read_mat_ark(cmd):
         post = np.zeros((mat.shape[0], num_classes))
-        prior_acc = np.zeros(num_classes)
         mat = Variable(torch.FloatTensor(mat))[None, :, :]
         batch_l = Variable(torch.IntTensor([mat.size(1)]))
         px_save = []
@@ -144,7 +141,7 @@ def get_output(config):
             pcx = sm(out[0, :, :])
             px = np.tile(px, (pcx.shape[1], 1)).T
             all_pcx.append(pcx.data.numpy())
-            all_px.append(np.ones(px.shape))
+            all_px.append(px)
 
             if config.task_prior == "mm":
                 mm = mmeasure_loss(pcx).item()
@@ -161,23 +158,13 @@ def get_output(config):
 
         if config.task_prior == "mm":
             all_tp = np.asarray(all_tp, dtype=np.float64)
-            if config.stream_selection:
-                temp = np.zeros(all_tp.shape)
-                temp[np.argmax(all_tp)] = 1
-                all_tp = temp
-            else:
-                all_tp = np.exp(all_tp) / np.sum(np.exp(all_tp))
+            all_tp = np.exp(all_tp) / np.sum(np.exp(all_tp))
             if np.isnan(all_tp[0]):
                 print("Switching to uniform priors")
                 all_tp = np.ones(num_domains) / num_domains
         elif config.task_prior == "dp":
             all_tp = np.asarray(all_tp, dtype=np.float64)
-            if config.stream_selection:
-                temp = np.zeros(all_tp.shape)
-                temp[np.argmax(all_tp)] = 1
-                all_tp = temp
-            else:
-                all_tp = np.exp(300 * all_tp) / np.sum(np.exp(300 * all_tp))
+            all_tp = np.exp(500 * all_tp) / np.sum(np.exp(500 * all_tp))
         elif config.task_prior == "lowent":
             all_tp = np.asarray(all_tp)
             all_tp = np.exp(all_tp) / np.sum(np.exp(all_tp))
@@ -185,20 +172,19 @@ def get_output(config):
                 print("Switching to uniform priors")
                 all_tp = np.ones(num_domains) / num_domains
             all_tp_2 = np.asarray(all_tp_2)
-            all_tp_2 = np.exp(300 * all_tp_2) / np.sum(np.exp(300 * all_tp_2))
+            all_tp_2 = np.exp(200 * all_tp_2) / np.sum(np.exp(200 * all_tp_2))
             print('Entropy dp:{:.2f} and Entropy mm:{:.2f}'.format(entropy(all_tp_2), entropy(all_tp)))
             if entropy(all_tp_2) < entropy(all_tp):
                 all_tp = all_tp_2
         for idx, pcx in enumerate(all_pcx):
-            post += pcx * all_px[idx] * all_tp[idx]
-            prior_acc += np.exp(priors[idx]) * all_tp[idx]
+            post += (np.log(pcx)-config.prior_weight * priors[idx]) * all_tp[idx]
 
         print_log = ""
         for ii, x in enumerate(px_save):
             print_log += "p(x) for Task {:d} ={:.6f} with prior ={:.6f} ".format(ii, x, all_tp[ii])
         print(print_log)
         sys.stdout.flush()
-        post_dict[utt_id] = np.log(post) - config.prior_weight * np.log(prior_acc)
+        post_dict[utt_id] = post/num_domains
 
     return post_dict
 
