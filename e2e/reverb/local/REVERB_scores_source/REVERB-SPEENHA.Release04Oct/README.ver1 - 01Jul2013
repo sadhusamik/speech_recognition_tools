@@ -1,0 +1,154 @@
+
+      ****************************************************
+      REVERB Challenge Speech Enhancement Evaluation Tools
+                                               Version 1.0
+   
+                                              1 July, 2013   
+                               REVERB challenge organizers
+      ****************************************************
+
+
+The tools and programs contained in this package is designed and 
+distributed for use in REVERB challenge. For detailed information on 
+the challenge, visit the challenge website 
+(reverb2014.dereverberation.com). The REVERB challenge consits of 
+speech enhancement and automatic speech recognition tasks, and the 
+tools and programs contained in this distribution are provided for
+participants in the speech enhancement task. The following is a quick 
+guide to get things started. 
+
+Questions, inquiries, and bug reports to the REVERB challenge 
+organizers (REVERB-challenge@lab.ntt.co.jp).
+
+
+********************
+Preliminaries
+
+Before starting, 
+  (1) Please carefully read Guidelines.pdf and the challenge website 
+      for detailed information on the data used for the challenge, how 
+      to obtain the data sets, general guidelines thatparticipants are 
+      expected to follow, etc. 
+  (2) Please carefully read taskfiles/README for explanation about task 
+      files. Each task file define a list of speech files that are 
+      required to be enhanced for each evaluation category (i.e., 
+      SimData/RealData, development/evaluation/training, 1ch/2ch/8ch, 
+      far/near, room1/room2/room3).			
+
+
+********************
+Usage
+
+To get started, follow the following steps. 
+
+  1. Obtain REVERB challenge data from LDC
+     To take part in the challenge, participants need to obtain the 
+     data from LDC (Linquistic Data Consortium). Detailed information
+     on this can be found in the challenge website. The website also
+     provides some example speech files. 
+
+  2. Download evaluation tools from the challenge website
+     If you are reading this, it means you have already downloaded 
+     these evaluation tools. So you have nothing to do in this step.
+
+  3. Run skeleton codes provided
+     Move to the directory named 'skeleton'. Open 'process_SimData.m'
+     and 'process_RealData', and change the value of 
+     'download_from_ldc' to an appropriate directory name. Launch
+     MATLAB, and then the skeleton code for SimData can be run as
+     % process_SimData
+     The skeleton code for RealData can also be run as
+     % process_RealData
+     These skeleton codes read input (i.e., noisy and reverberant) 
+     signals, create a directory named 'output', and simply store the 
+     read signals in the output directory without modification. 
+
+  4. Score the outputs
+     Move to the directory named 'evaltools' and launch MATLAB. Then,
+     score the outputs of the skeleton codes as (before running these 
+     codes, be sure to change the value of 'download_from_ldc')
+     % score_SimData
+     % score_RealData
+     This calculates several objective speech quality measures and 
+     stores the results in a directory named 'scores'. The objective
+     speech quality measures used for the challenge are explained in 
+     Guideline.pdf and the challenge website. In the 'score' directory, 
+     you find two files named 'score_SimData' and 'score_RealData' 
+     created, which summarize the evaluation results for SimData and 
+     RealData, respectively. For example, 'score_SimData' lools like
+
+     Data type   : SimData
+     Date created: xx-xxx-2013 xx:xx:xx
+
+     ================================================
+                Cepstral distance in dB            
+     ------------------------------------------------
+                 	      	  mean	      	median
+     ------------------------------------------------
+                 	   org	   enh	   org	   enh
+     ------------------------------------------------
+       dt_far_room1	  2.65	  2.65	  2.36	  2.36	
+       dt_far_room2	  5.08	  5.08	  4.94	  4.94	
+       dt_far_room3	  4.82	  4.82	  4.60	  4.60	
+      dt_near_room1	  1.96	  1.96	  1.67	  1.67	
+      dt_near_room2	  4.58	  4.58	  4.30	  4.30	
+      dt_near_room3	  4.20	  4.20	  3.91	  3.91	
+     -------------------------------------------------
+            average	  3.88	  3.88	  3.63	  3.63
+     =================================================
+
+
+     =================================================
+                 SRMR  (only mean used)            
+     -------------------------------------------------
+                 	      	  mean	      	median
+     -------------------------------------------------
+                 	   org	   enh	   org	   enh
+     -------------------------------------------------
+       dt_far_room1	  2.16	  2.16	     -	     -	
+       dt_far_room2	  3.40	  3.40	     -	     -	
+       dt_far_room3	  3.62	  3.62	     -	     -	
+      dt_near_room1	  2.29	  2.29	     -	     -	
+      dt_near_room2	  2.72	  2.72	     -	     -	
+      dt_near_room3	  2.73	  2.73	     -	     -	
+     -------------------------------------------------
+            average	  2.82	  2.82	     -	     -
+     =================================================
+
+     (The rest is omitted.)
+
+  5. All done! Now test and optimize your own algorithm!
+
+
+********************
+How to install PESQ
+
+By default, PESQ is not calculated. PESQ is an ITU-T recommended 
+measure for assesment of narrow-band speech quality. In this challenge,
+ITU-T Recommendation P.862 Ammendment 2 (P.862.2) is assumed, which 
+supports wideband speech input. To use this version of PESQ, you need 
+to download the source codes of the official implementation from the 
+ITU-T website. This can be obtained from the following link. 
+http://www.itu.int/rec/dologin_pub.asp?lang=e&id=T-REC-P.862-200511-I!Amd2!SOFT-ZST-E&type=items
+
+On Linux systems, the source codes can be compiled with GCC 4 as
+% cd Software/P862_annex_A_2005_CD/source
+% gcc -o PESQ *.c -lm
+This generates an executable file named 'PESQ'. 
+
+Finally, move to 'evaltools' directory and open 'score_SimData.m'. 
+Then, uncomment the line defining 'pesqdir' and modify the value of 
+this variable to the directory where the PESQ executable can be found.
+If the name of the PESQ executable is different from 'PESQ', you also
+need to modify the value of 'pesqexe'.
+
+
+********************
+Acknowledgement
+
+Thanks to Dr. Tiago H. Falk at INRS-EMT for providing the latest 
+version of the SRMR toolbox and allowing us to include this in this 
+package. FFT2MELFX included in this package has been obtained from
+MATLAB File Exchange and is distributed under BSD License. Please 
+respect the copyrights and the terms of use for these softwares. 
+

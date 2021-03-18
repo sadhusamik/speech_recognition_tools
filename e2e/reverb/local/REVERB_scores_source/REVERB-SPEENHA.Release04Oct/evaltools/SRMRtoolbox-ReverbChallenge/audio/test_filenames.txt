@@ -1,0 +1,10 @@
+F1_010.wav
+F1_010_reverb0.4.wav
+F1_010_reverb0.5.wav
+F1_010_reverb0.6.wav
+F1_010_reverb0.7.wav
+F1_010_reverb0.8.wav
+F1_010_reverb0.9.wav
+F1_010_reverb1.0.wav
+F1_010_reverb1.5.wav
+F1_010_reverb2.0.wav
