@@ -228,8 +228,6 @@ def computeLpcFast(signal, order):
     xlpc = np.append(1, xlpc)
     gg = y[0] + np.sum(xlpc * y[1:order + 2])
 
-    # xlpc=np.random.rand(order)
-    # gg=1
     return xlpc, gg
 
 

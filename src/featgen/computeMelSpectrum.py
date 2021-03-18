@@ -5,7 +5,8 @@ Author: Samik Sadhu
 """
 
 import numpy as np
-from features import getFrames, createFbank, createFbankCochlear, spliceFeats, addReverb, add_agwn, load_noise, add_noise_to_wav, \
+from features import getFrames, createFbank, createFbankCochlear, spliceFeats, addReverb, add_agwn, load_noise, \
+    add_noise_to_wav, \
     get_kaldi_ark
 from scipy.fftpack import fft, dct
 from scipy.io.wavfile import read
@@ -18,8 +19,9 @@ from scipy.signal import convolve
 
 def get_args():
     parser = argparse.ArgumentParser('Extract Mel Energy Features')
-    parser.add_argument('scp', help='"scp" list')
+    parser.add_argument('scp', help='scp file')
     parser.add_argument('outfile', help='output file')
+    parser.add_argument("--scp_type", default='wav', help="scp type can be 'wav' or 'segment'")
     parser.add_argument("--spectrum_type", default="log", help="log/power For log spectrum or energy spectrum")
     parser.add_argument('--nfilters', type=int, default=23, help='number of filters (30)')
     parser.add_argument('--fduration', type=float, default=0.02, help='Window length (0.02 sec)')
@@ -38,6 +40,7 @@ def get_args():
 def compute_mel_spectrum(args, srate=16000,
                          window=np.hamming):
     wavs = args.scp
+    scp_type = args.scp_type
     outfile = args.outfile
     add_noise = args.add_noise
     nfft = args.nfft
@@ -73,6 +76,10 @@ def compute_mel_spectrum(args, srate=16000,
             sr_r, rir = read('./RIR/RIR_SmallRoom1_near_AnglA.wav')
             rir = rir[:, 1]
             rir = rir / np.power(2, 15)
+        elif add_reverb == 'medium_room':
+            sr_r, rir = read('./RIR/RIR_MediumRoom1_far_AnglA.wav')
+            rir = rir[:, 1]
+            rir = rir / np.power(2, 15)
         elif add_reverb == 'large_room':
             sr_r, rir = read('./RIR/RIR_LargeRoom1_far_AnglA.wav')
             rir = rir[:, 1]
@@ -95,45 +102,64 @@ def compute_mel_spectrum(args, srate=16000,
             print('%s: Computing Features for file: %s' % (sys.argv[0], uttid))
             sys.stdout.flush()
 
-            if inwav[-1] == '|':
-                proc = subprocess.run(inwav[:-1], shell=True,
-                                      stdout=subprocess.PIPE)
-                sr, signal = read(io.BytesIO(proc.stdout))
-            else:
-                sr, signal = read(inwav)
-            assert sr == srate, 'Input file has different sampling rate.'
+            if scp_type == 'wav':
+                if inwav[-1] == '|':
+                    try:
+                        proc = subprocess.run(inwav[:-1], shell=True, stdout=subprocess.PIPE)
+                        sr, signal = read(io.BytesIO(proc.stdout))
+                        skip_rest=False
+                    except Exception:
+                        skip_rest=True
+                else:
+                    try:
+                        sr, signal = read(inwav)
+                        skip_rest = False
+                    except Exception:
+                        skip_rest = True
 
+                assert sr == srate, 'Input file has different sampling rate.'
+            elif scp_type == 'segment':
+                try:
+                    cmd = 'wav-copy ' + inwav + ' - '
+                    proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
+                    sr, signal = read(io.BytesIO(proc.stdout))
+                    skip_rest = False
+                except Exception:
+                    skip_rest = True
+            else:
+                raise ValueError('Invalid type of scp type, it should be either wav or segment')
             # signal = signal / np.power(2, 15)
 
-            if add_noise:
-                if not add_noise == "clean":
-                    if add_noise == "diff":
-                        # signal = np.diff(signal)
-                        a = [1, 2, 3, 2, 0, -2, -5, -2, 0, 2, 3, 2, 1]
-                        signal = convolve(signal, a, mode='same')
-                    else:
-                        signal = add_noise_to_wav(signal, noise, float(noise_info[1]))
+            if not skip_rest:
+                if add_noise:
+                    if not add_noise == "clean":
+                        if add_noise == "diff":
+                            # signal = np.diff(signal)
+                            a = [1, 2, 3, 2, 0, -2, -5, -2, 0, 2, 3, 2, 1]
+                            signal = convolve(signal, a, mode='same')
+                        else:
+                            signal = add_noise_to_wav(signal, noise, float(noise_info[1]))
 
-            if add_reverb:
-                if not add_reverb == 'clean':
-                    signal = addReverb(signal, rir)
+                if add_reverb:
+                    if not add_reverb == 'clean':
+                        signal = addReverb(signal, rir)
 
-            time_frames = np.array([frame for frame in
-                                    getFrames(signal, srate, frate, fduration, window)])
+                time_frames = np.array([frame for frame in
+                                        getFrames(signal, srate, frate, fduration, window)])
 
-            if args.spectrum_type == "log":
-                melEnergy_frames = np.log10(
-                    np.matmul(np.abs(fft(time_frames, nfft, axis=1)[:, :int(nfft / 2 + 1)]), np.transpose(fbank)))
-            elif args.spectrum_type == "power":
-                melEnergy_frames = np.power(
-                    np.matmul(np.abs(fft(time_frames, nfft, axis=1)[:, :int(nfft / 2 + 1)]), np.transpose(fbank)), 2)
-            else:
-                print("Spectrum type not supported! ")
-                sys.exit(1)
+                if args.spectrum_type == "log":
+                    melEnergy_frames = np.log10(
+                        np.matmul(np.abs(fft(time_frames, nfft, axis=1)[:, :int(nfft / 2 + 1)]), np.transpose(fbank)))
+                elif args.spectrum_type == "power":
+                    melEnergy_frames = np.power(
+                        np.matmul(np.abs(fft(time_frames, nfft, axis=1)[:, :int(nfft / 2 + 1)]), np.transpose(fbank)), 2)
+                else:
+                    print("Spectrum type not supported! ")
+                    sys.exit(1)
 
-            all_feats[uttid] = melEnergy_frames
-            if args.write_utt2num_frames:
-                all_lens[uttid] = melEnergy_frames.shape[0]
+                all_feats[uttid] = melEnergy_frames
+                if args.write_utt2num_frames:
+                    all_lens[uttid] = melEnergy_frames.shape[0]
         get_kaldi_ark(all_feats, outfile)
 
         if args.write_utt2num_frames:

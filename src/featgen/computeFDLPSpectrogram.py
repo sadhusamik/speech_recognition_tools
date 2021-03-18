@@ -28,6 +28,7 @@ from features import getFrames, createFbank, createFbankCochlear, computeLpcFast
 
 def getFeats(args, srate=16000, window=np.hamming):
     wavs = args.scp
+    scp_type = args.scp_type
     outfile = args.outfile
     coeff_num = args.coeff_num
     coeff_range = args.coeff_range
@@ -38,6 +39,11 @@ def getFeats(args, srate=16000, window=np.hamming):
     kaldi_cmd = args.kaldi_cmd
     add_noise = args.add_noise
     add_reverb = args.add_reverb
+
+    if args.lifter_config:
+        fid = open(args.lifter_config, 'r')
+        lifter_config = fid.readline().strip().split(',')
+        lifter_config = np.asarray([float(x) for x in lifter_config])
 
     # Set up mel-filterbank
     fbank_type = args.fbank_type.strip().split(',')
@@ -56,6 +62,9 @@ def getFeats(args, srate=16000, window=np.hamming):
     else:
         raise ValueError('Invalid type of filter bank, use mel or cochlear with proper configuration')
 
+    # Ignore odd modulations
+    if args.odd_mod_zero:
+        print('%s: Ignoring odd modulations... ' % sys.argv[0])
     if add_noise:
         if add_noise == "clean" or add_noise == "diff":
             print('%s: No noise added!' % sys.argv[0])
@@ -66,6 +75,10 @@ def getFeats(args, srate=16000, window=np.hamming):
     if add_reverb:
         if add_reverb == 'small_room':
             sr_r, rir = read('./RIR/RIR_SmallRoom1_near_AnglA.wav')
+            rir = rir[:, 1]
+            rir = rir / np.power(2, 15)
+        elif add_reverb == 'medium_room':
+            sr_r, rir = read('./RIR/RIR_MediumRoom1_far_AnglA.wav')
             rir = rir[:, 1]
             rir = rir / np.power(2, 15)
         elif add_reverb == 'large_room':
@@ -113,83 +126,107 @@ def getFeats(args, srate=16000, window=np.hamming):
             tokens = line.strip().split()
             uttid, inwav = tokens[0], ' '.join(tokens[1:])
 
-            if inwav[-1] == '|':
-                proc = subprocess.run(inwav[:-1], shell=True,
-                                      stdout=subprocess.PIPE)
-                sr, signal = read(io.BytesIO(proc.stdout))
+            if scp_type == 'wav':
+                if inwav[-1] == '|':
+                    try:
+                        proc = subprocess.run(inwav[:-1], shell=True, stdout=subprocess.PIPE)
+                        sr, signal = read(io.BytesIO(proc.stdout))
+                        skip_rest=False
+                    except Exception:
+                        skip_rest=True
+                else:
+                    try:
+                        sr, signal = read(inwav)
+                        skip_rest = False
+                    except Exception:
+                        skip_rest = True
+
+                assert sr == srate, 'Input file has different sampling rate.'
+            elif scp_type == 'segment':
+                try:
+                    cmd = 'wav-copy ' + inwav + ' - '
+                    proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
+                    sr, signal = read(io.BytesIO(proc.stdout))
+                    skip_rest = False
+                except Exception:
+                    skip_rest = True
             else:
-                sr, signal = read(inwav)
-            assert sr == srate, 'Input file has different sampling rate.'
+                raise ValueError('Invalid type of scp type, it should be either wav or segment')
 
             # I want to work with numbers from 0 to 1 so....
             # signal = signal / np.power(2, 15)
 
-            if add_noise:
-                if not add_noise == "clean":
-                    if add_noise == "diff":
-                        a = [1, 2, 3, 2, 0, -2, -5, -2, 0, 2, 3, 2, 1]
-                        signal = convolve(signal, a, mode='same')
-                    else:
-                        signal = add_noise_to_wav(signal, noise, float(noise_info[1]))
-
-            if add_reverb:
-                if not add_reverb == 'clean':
-                    signal = addReverb(signal, rir)
-
-            tframes = signal.shape[0]  # Number of samples in the signal
-
-            lfr = 1 / (args.overlap_fraction * fduration)
-            time_frames = np.array([frame for frame in
-                                    getFrames(signal, srate, lfr, fduration, window)])
-
-            cos_trans = freqAnalysis.dct(time_frames) / np.sqrt(2 * int(srate * fduration))
-
-            [frame_num, ndct] = np.shape(cos_trans)
-
-            feats = np.zeros((nfilters, int(np.ceil(tframes * frate / srate))))
-            ptr = int(0)
-
-            print('%s: Computing Features for file: %s' % (sys.argv[0], uttid))
-            sys.stdout.flush()
-
-            for i in range(0, frame_num):
-                for j in range(nfilters):
-                    filt = fbank[j, 0:-1]
-                    band_dct = filt * cos_trans[i, :]
-                    xlpc, gg = computeLpcFast(band_dct, order)  # Compute LPC coefficients
-                    ms = computeModSpecFromLpc(gg, xlpc, coeff_num)
-                    ms = ms * mask
-                    if not args.gamma_weight[0] == "None":
-                        ms = ms * mod_wts
-                    ms = np.abs(fft(ms, 2 * int(fduration * frate)))
-                    ms = ms - np.mean(ms)
-                    kk = int(np.round(fduration * frate))
-                    kkb2 = int(np.round(fduration * frate / 2))
-                    ms = np.exp(ms[0:kk]) * np.hanning(kk) / window(kk)
-
-                    if i == 0:
-                        if feats.shape[1] < kkb2:
-                            feats[j, :] += ms[kkb2:kkb2 + feats.shape[1]]
+            if not skip_rest:
+                if add_noise:
+                    if not add_noise == "clean":
+                        if add_noise == "diff":
+                            a = [1, 2, 3, 2, 0, -2, -5, -2, 0, 2, 3, 2, 1]
+                            signal = convolve(signal, a, mode='same')
                         else:
-                            feats[j, ptr:ptr + kkb2] += ms[kkb2:]
-                    elif i == frame_num - 1 or i == frame_num - 2:
-                        if ms.shape[0] >= feats.shape[1] - ptr:
-                            feats[j, ptr:] += ms[:feats.shape[1] - ptr]
+                            signal = add_noise_to_wav(signal, noise, float(noise_info[1]))
+
+                if add_reverb:
+                    if not add_reverb == 'clean':
+                        signal = addReverb(signal, rir)
+
+                tframes = signal.shape[0]  # Number of samples in the signal
+
+                lfr = 1 / (args.overlap_fraction * fduration)
+                time_frames = np.array([frame for frame in
+                                        getFrames(signal, srate, lfr, fduration, window)])
+
+                cos_trans = freqAnalysis.dct(time_frames) / np.sqrt(2 * int(srate * fduration))
+
+                [frame_num, ndct] = np.shape(cos_trans)
+
+                feats = np.zeros((nfilters, int(np.ceil(tframes * frate / srate))))
+                ptr = int(0)
+
+                print('%s: Computing Features for file: %s' % (sys.argv[0], uttid))
+                sys.stdout.flush()
+
+                for i in range(0, frame_num):
+                    for j in range(nfilters):
+                        filt = fbank[j, 0:-1]
+                        band_dct = filt * cos_trans[i, :]
+                        xlpc, gg = computeLpcFast(band_dct, order)  # Compute LPC coefficients
+                        ms = computeModSpecFromLpc(gg, xlpc, coeff_num)
+                        ms = ms * mask
+                        if args.lifter_config:
+                            ms = ms * lifter_config
+                        if not args.gamma_weight[0] == "None":
+                            ms = ms * mod_wts
+                        if args.odd_mod_zero:
+                            ms[1::2] = 0
+                        ms = fft(ms, 2 * int(fduration * frate))
+                        ms = np.abs(np.exp(ms))
+                        kk = int(np.round(fduration * frate))
+                        kkb2 = int(np.round(fduration * frate / 2))
+                        ms = ms[0:kk] * np.hanning(kk) / window(kk)
+
+                        if i == 0:
+                            if feats.shape[1] < kkb2:
+                                feats[j, :] += ms[kkb2:kkb2 + feats.shape[1]]
+                            else:
+                                feats[j, ptr:ptr + kkb2] += ms[kkb2:]
+                        elif i == frame_num - 1 or i == frame_num - 2:
+                            if ms.shape[0] >= feats.shape[1] - ptr:
+                                feats[j, ptr:] += ms[:feats.shape[1] - ptr]
+                            else:
+                                feats[j, ptr:ptr + kk] += ms
                         else:
                             feats[j, ptr:ptr + kk] += ms
+
+                    kk = int(np.round(fduration * frate * args.overlap_fraction))
+                    kkb2 = int(np.round(fduration * frate / 2))
+                    if i == 0:
+                        ptr = int(ptr + kk - kkb2)
                     else:
-                        feats[j, ptr:ptr + kk] += ms
+                        ptr = int(ptr + kk + randrange(2))
 
-                kk = int(np.round(fduration * frate * args.overlap_fraction))
-                kkb2 = int(np.round(fduration * frate / 2))
-                if i == 0:
-                    ptr = int(ptr + kk - kkb2)
-                else:
-                    ptr = int(ptr + kk + randrange(2))
-
-            all_feats[uttid] = np.log(np.clip(feats.T, a_max=None, a_min=0.00000000000001))
-            if args.write_utt2num_frames:
-                all_lens[uttid] = feats.shape[1]
+                all_feats[uttid] = np.log(np.clip(feats.T, a_max=None, a_min=0.00000000000001))
+                if args.write_utt2num_frames:
+                    all_lens[uttid] = feats.shape[1]
 
         dict2Ark(all_feats, outfile, kaldi_cmd)
         if args.write_utt2num_frames:
@@ -204,6 +241,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Extract FDLP Spectrogram.')
     parser.add_argument('scp', help='"scp" list')
     parser.add_argument('outfile', help='output file')
+    parser.add_argument("--scp_type", default='wav', help="scp type can be 'wav' or 'segment'")
     parser.add_argument('--nfilters', type=int, default=20, help='number of filters (15)')
     parser.add_argument('--coeff_num', type=int, default=50, help='Total Number of coefficients to compute')
     parser.add_argument('--coeff_range', type=str, default='1,20', help="Range of Modulation coefficients to keep")
@@ -215,7 +253,9 @@ if __name__ == '__main__':
     parser.add_argument('--add_reverb', help='input "clean" OR "small_room" OR "large_room"')
     parser.add_argument('--fbank_type', type=str, default='mel,1',
                         help='mel,warp_fact OR cochlear,om_w,alpa,fixed,beta,warp_fact')
+    parser.add_argument('--odd_mod_zero', action='store_true', help='Ignore the odd modulation coefficients')
     parser.add_argument('--gamma_weight', type=str, default='None', help='Configured as scale,shape,pk')
+    parser.add_argument('--lifter_config', type=str, default=None, help='Configuration for general liftering')
     parser.add_argument("--write_utt2num_frames", action="store_true", help="Set to write utt2num_frames")
     parser.add_argument('--add_noise',
                         help='Specify "type of noise, snr", types: babble, buccaneer1, buccaneer2, car, destroyerops, f16, factory1, factory2, m109, machinegun, pink, street, volvo, white')

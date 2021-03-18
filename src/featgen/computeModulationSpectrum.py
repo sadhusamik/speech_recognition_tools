@@ -17,12 +17,19 @@ import subprocess
 import scipy.fftpack as freqAnalysis
 import sys
 import time
+from scipy.fftpack import fft, ifft
 
-from features import getFrames, createFbank, computeLpcFast, computeModSpecFromLpc, addReverb, dict2Ark
+from features import getFrames, createFbank, computeLpcFast, computeModSpecFromLpc, addReverb, dict2Ark, \
+    createFbankCochlear
+
+
+def sq_wind(N):
+    return np.ones(N)
 
 
 def getFeats(args, srate=16000, window=np.hanning):
     wavs = args.scp
+    scp_type = args.scp_type
     outfile = args.outfile
     add_reverb = args.add_reverb
     coeff_0 = args.coeff_0
@@ -33,8 +40,23 @@ def getFeats(args, srate=16000, window=np.hanning):
     nfilters = args.nfilters
     kaldi_cmd = args.kaldi_cmd
 
-    fbank = createFbank(nfilters, int(2 * fduration * srate), srate)
+    # Set up mel-filterbank
+    fbank_type = args.fbank_type.strip().split(',')
 
+    if fbank_type[0] == "mel":
+        if len(fbank_type) < 2:
+            raise ValueError('Mel filter bank not configured properly....')
+        fbank = createFbank(nfilters, int(2 * fduration * srate), srate, warp_fact=float(fbank_type[1]))
+    elif fbank_type[0] == "cochlear":
+        if len(fbank_type) < 6:
+            raise ValueError('Cochlear filter bank not configured properly....')
+        if int(fbank_type[3]) == 1:
+            print('%s: Alpha is fixed and will not change as a function of the center frequency...' % sys.argv[0])
+        fbank = createFbankCochlear(nfilters, int(2 * fduration * srate), srate, om_w=float(fbank_type[1]),
+                                    alp=float(fbank_type[2]), fixed=int(fbank_type[3]), bet=float(fbank_type[4]),
+                                    warp_fact=float(fbank_type[5]))
+    else:
+        raise ValueError('Invalid type of filter bank, use mel or cochlear with proper configuration')
     coeff_num = coeff_n - coeff_0 + 1
 
     if args.keep_even:
@@ -47,6 +69,11 @@ def getFeats(args, srate=16000, window=np.hanning):
 
     else:
         feat_len = coeff_num
+    if args.fft_modulation:
+        feat_len = int(feat_len / 2)
+    if args.no_window:
+        print('%s: Using square windows' % sys.argv[0])
+        window = sq_wind
 
     if add_reverb:
         if add_reverb == 'small_room':
@@ -69,54 +96,86 @@ def getFeats(args, srate=16000, window=np.hanning):
             tokens = line.strip().split()
             uttid, inwav = tokens[0], ' '.join(tokens[1:])
 
-            if inwav[-1] == '|':
-                proc = subprocess.run(inwav[:-1], shell=True,
-                                      stdout=subprocess.PIPE)
-                sr, signal = read(io.BytesIO(proc.stdout))
+            if scp_type == 'wav':
+                if inwav[-1] == '|':
+                    try:
+                        proc = subprocess.run(inwav[:-1], shell=True, stdout=subprocess.PIPE)
+                        sr, signal = read(io.BytesIO(proc.stdout))
+                        skip_rest = False
+                    except Exception:
+                        skip_rest = True
+                else:
+                    try:
+                        sr, signal = read(inwav)
+                        skip_rest = False
+                    except Exception:
+                        skip_rest = True
+
+                assert sr == srate, 'Input file has different sampling rate.'
+            elif scp_type == 'segment':
+                try:
+                    cmd = 'wav-copy ' + inwav + ' - '
+                    proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
+                    sr, signal = read(io.BytesIO(proc.stdout))
+                    skip_rest = False
+                except Exception:
+                    skip_rest = True
             else:
-                sr, signal = read(inwav)
-            assert sr == srate, 'Input file has different sampling rate.'
+                raise ValueError('Invalid type of scp type, it should be either wav or segment')
 
-            # I want to work with numbers from 0 to 1 so.... 
-            signal = signal / np.power(2, 15)
+            if not skip_rest:
+                # I want to work with numbers from 0 to 1 so....
+                # signal = signal / np.power(2, 15)
 
-            if add_reverb:
-                if not add_reverb == 'clean':
-                    signal = addReverb(signal, rir)
+                if add_reverb:
+                    if not add_reverb == 'clean':
+                        signal = addReverb(signal, rir)
 
-            time_frames = np.array([frame for frame in
-                                    getFrames(signal, srate, frate, fduration, window)])
+                time_frames = np.array([frame for frame in
+                                        getFrames(signal, srate, frate, fduration, window)])
 
-            cos_trans = freqAnalysis.dct(time_frames) / np.sqrt(2 * int(srate * fduration))
+                cos_trans = freqAnalysis.dct(time_frames) / np.sqrt(2 * int(srate * fduration))
 
-            [frame_num, ndct] = np.shape(cos_trans)
+                [frame_num, ndct] = np.shape(cos_trans)
 
-            feats = np.zeros((frame_num, nfilters * feat_len))
+                feats = np.zeros((frame_num, nfilters * feat_len))
 
-            print('%s: Computing Features for file: %s, also %d' % (sys.argv[0], uttid, time_frames.shape[0]))
-            sys.stdout.flush()
-            for i in range(frame_num):
+                print('%s: Computing Features for file: %s, also %d' % (sys.argv[0], uttid, time_frames.shape[0]))
+                sys.stdout.flush()
+                for i in range(frame_num):
 
-                each_feat = np.zeros([nfilters, feat_len])
-                for j in range(nfilters):
-                    filt = fbank[j, 0:-1]
-                    band_dct = filt * cos_trans[i, :]
-                    xlpc, gg = computeLpcFast(band_dct, order)  # Compute LPC coefficients
-                    mod_spec = computeModSpecFromLpc(gg, xlpc, coeff_n)
-                    temp2 = mod_spec[coeff_0 - 1:coeff_n] 
-                    if args.keep_even:
-                        if coeff_0 % 2 == 0:
-                            each_feat[j, :] = temp2[1::2]
+                    each_feat = np.zeros([nfilters, feat_len])
+                    for j in range(nfilters):
+                        filt = fbank[j, 0:-1]
+                        band_dct = filt * cos_trans[i, :]
+                        xlpc, gg = computeLpcFast(band_dct, order)  # Compute LPC coefficients
+
+                        if args.fft_modulation:
+                            # xx = np.log(gg) - np.log(np.abs(fft(xlpc[0::2])))
+                            xx = np.log(gg) - np.log(np.abs(fft(xlpc[0::2], band_dct.shape[0])))
+                            temp2 = 2 * ifft(xx)
+                            temp2 = np.abs(temp2)[:feat_len]
                         else:
-                            each_feat[j, :] = temp2[0::2]
-                    else:
-                        each_feat[j, :] = temp2
+                            mod_spec = computeModSpecFromLpc(gg, xlpc, coeff_n)
+                            temp2 = np.abs(mod_spec[coeff_0 - 1:coeff_n])
+                            sig_len = cos_trans[i, :].shape[0]
 
-                each_feat = np.reshape(each_feat, (1, nfilters * feat_len))
+                            if args.real_cepstrum:
+                                temp2 = np.abs(ifft(np.log(np.abs(np.exp(fft(temp2, 2 * sig_len)))))[0:sig_len])[
+                                        coeff_0 - 1:coeff_n]
+                        if args.keep_even:
+                            if coeff_0 % 2 == 0:
+                                each_feat[j, :] = temp2[1::2]
+                            else:
+                                each_feat[j, :] = temp2[0::2]
+                        else:
+                            each_feat[j, :] = temp2
 
-                feats[i, :] = each_feat
+                    each_feat = np.reshape(each_feat, (1, nfilters * feat_len))
 
-            all_feats[uttid] = feats
+                    feats[i, :] = each_feat
+
+                all_feats[uttid] = feats
 
         dict2Ark(all_feats, outfile, kaldi_cmd)
 
@@ -125,6 +184,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser('Extract FDLP Modulation Spectral Features.')
     parser.add_argument('scp', help='"scp" list')
     parser.add_argument('outfile', help='output file')
+    parser.add_argument("--scp_type", default='wav', help="scp type can be 'wav' or 'segment'")
     parser.add_argument('--nfilters', type=int, default=15, help='number of filters (15)')
     parser.add_argument('--coeff_0', type=int, default=5, help='starting coefficient')
     parser.add_argument('--coeff_n', type=int, default=30, help='ending coefficient')
@@ -133,7 +193,12 @@ if __name__ == '__main__':
     parser.add_argument('--fduration', type=float, default=0.5, help='Window length (0.5 sec)')
     parser.add_argument('--frate', type=int, default=100, help='Frame rate (100 Hz)')
     parser.add_argument('--add_reverb', help='input "clean" OR "small_room" OR "large_room"')
+    parser.add_argument('--fbank_type', type=str, default='mel,1',
+                        help='mel,warp_fact OR cochlear,om_w,alpa,fixed,beta,warp_fact')
     parser.add_argument('--set_unity_gain', action='store_true', help='Set LPC gain to 1 (True)')
+    parser.add_argument('--real_cepstrum', action='store_true', help='Computes real cepstrum')
+    parser.add_argument('--no_window', action='store_true', help='Keeps the square window')
+    parser.add_argument('--fft_modulation', action='store_true', help='Computes modulation by fft and not recursion')
     parser.add_argument('--kaldi_cmd', help='Kaldi command to use to get ark files')
     args = parser.parse_args()
 
