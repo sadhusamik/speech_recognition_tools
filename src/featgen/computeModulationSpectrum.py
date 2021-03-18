@@ -157,7 +157,7 @@ def getFeats(args, srate=16000, window=np.hanning):
                             temp2 = np.abs(temp2)[:feat_len]
                         else:
                             mod_spec = computeModSpecFromLpc(gg, xlpc, coeff_n)
-                            temp2 = np.abs(mod_spec[coeff_0 - 1:coeff_n])
+                            temp2 = mod_spec[coeff_0 - 1:coeff_n]
                             sig_len = cos_trans[i, :].shape[0]
 
                             if args.real_cepstrum:
