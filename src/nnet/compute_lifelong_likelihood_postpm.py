@@ -52,6 +52,8 @@ def get_args():
                         help="Provide prior to normalize and get likelihoods, dp/mm/lowent prior with commas ")
     parser.add_argument("task_prior", help="Provide prior for every task")
     parser.add_argument("save_file", help="file to save posteriors")
+    parser.add_argument("--stream_selection", action="store_true",
+                        help="Set to use stream selection rather than stream fusion")
     parser.add_argument("--prior_weight", type=float, default=0.8, help="Weight for the prior distribution")
     parser.add_argument("--override_trans", default=None, help="Provide a different feature transformation file")
     return parser.parse_args()
@@ -159,13 +161,23 @@ def get_output(config):
 
         if config.task_prior == "mm":
             all_tp = np.asarray(all_tp, dtype=np.float64)
-            all_tp = np.exp(all_tp) / np.sum(np.exp(all_tp))
+            if config.stream_selection:
+                temp = np.zeros(all_tp.shape)
+                temp[np.argmax(all_tp)] = 1
+                all_tp = temp
+            else:
+                all_tp = np.exp(all_tp) / np.sum(np.exp(all_tp))
             if np.isnan(all_tp[0]):
                 print("Switching to uniform priors")
                 all_tp = np.ones(num_domains) / num_domains
         elif config.task_prior == "dp":
             all_tp = np.asarray(all_tp, dtype=np.float64)
-            all_tp = np.exp(300 * all_tp) / np.sum(np.exp(300 * all_tp))
+            if config.stream_selection:
+                temp = np.zeros(all_tp.shape)
+                temp[np.argmax(all_tp)] = 1
+                all_tp = temp
+            else:
+                all_tp = np.exp(300 * all_tp) / np.sum(np.exp(300 * all_tp))
         elif config.task_prior == "lowent":
             all_tp = np.asarray(all_tp)
             all_tp = np.exp(all_tp) / np.sum(np.exp(all_tp))
