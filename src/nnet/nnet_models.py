@@ -580,6 +580,7 @@ class nnetCurlMultistreamClassifier(nn.Module):
         self.hidden_size = hidden_size
         self.hidden_size_classifier = hidden_size_classifier
         self.enc_scale = enc_scale
+        self.bn_size = bn_size
 
         self.curl_encoder = curlEncoder(input_size, num_layers_enc, hidden_size, bn_size, comp_num)
         self.curl_decoder = curlDecoderMultistream(bn_size, comp_num, num_layers_dec, hidden_size, input_size)
@@ -589,15 +590,29 @@ class nnetCurlMultistreamClassifier(nn.Module):
             [decoderRNN(bn_size, num_layers_class, hidden_size_classifier, out_size) for i in range(self.comp_num)])
         self.use_gpu = use_gpu
 
-    def expand_component(self):
+    def expand_component(self, use_gpu):
         self.comp_num = self.comp_num + 1
 
+        if use_gpu:
         # Add extra Gaussian
-        self.curl_encoder.means.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size))
-        self.curl_encoder.var.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size))
-        updated_y = nn.Linear(in_features=self.hidden_size, out_features=self.comp_num)
-        updated_y.weight[0:self.comp_num - 1, :] = self.categorical.weight
-        self.categorical = updated_y
+            self.curl_encoder.means.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size).cuda())
+            self.curl_encoder.var.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size).cuda())
+            updated_y = nn.Linear(in_features=self.hidden_size, out_features=self.comp_num).cuda()
+            with torch.no_grad():
+                updated_y.weight[0:self.comp_num - 1, :] = self.curl_encoder.categorical.weight
+                updated_y.weight[0:self.comp_num - 1] = self.curl_encoder.categorical.bias
+            self.curl_encoder.categorical = updated_y
+        else:
+            # Add extra Gaussian
+            self.curl_encoder.means.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size))
+            self.curl_encoder.var.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size))
+            updated_y = nn.Linear(in_features=self.hidden_size, out_features=self.comp_num)
+            with torch.no_grad():
+                updated_y.weight[0:self.comp_num - 1, :] = self.curl_encoder.categorical.weight
+                updated_y.weight[0:self.comp_num - 1] = self.curl_encoder.categorical.bias
+            self.curl_encoder.categorical = updated_y
+
+        self.curl_encoder.comp_num = self.comp_num
 
         # Add extra reconstruction and classifier decoders
         input_sizes = [self.bn_size] + [self.hidden_size] * (self.num_layers_dec - 1)
@@ -614,9 +629,9 @@ class nnetCurlMultistreamClassifier(nn.Module):
         latent = self.curl_encoder(inputs, lengths)
         # Scale the gradients
 
-        #h1 = latent[0].register_hook(lambda grad: grad * self.enc_scale)
-        #h2 = latent[1].register_hook(lambda grad: grad * self.enc_scale)
-        #h3 = latent[2].register_hook(lambda grad: grad * self.enc_scale)
+        h1 = latent[0].register_hook(lambda grad: grad * self.enc_scale)
+        h2 = latent[1].register_hook(lambda grad: grad * self.enc_scale)
+        h3 = latent[2].register_hook(lambda grad: grad * self.enc_scale)
 
         sampled_latent = self.curl_sampler(latent)
         class_out = []

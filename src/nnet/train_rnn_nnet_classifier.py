@@ -58,6 +58,7 @@ def get_args():
                         help="Percentage of tolerance to leave on dev error for lr scheduling")
     parser.add_argument("--dropout", type=float, default=0, help="Dropout rate")
     parser.add_argument("--weight_decay", type=float, default=0, help="L2 Regularization weight")
+    parser.add_argument("--load_checkpoint", type=str, default="None", help="Model checkpoint to load")
 
     # Misc configurations
     parser.add_argument("--num_classes", type=int, default=42,
@@ -73,6 +74,11 @@ def get_args():
 
 
 def run(config):
+    if config.use_gpu:
+        # Set environment variable for GPU ID
+        id = get_device_id()
+        os.environ["CUDA_VISIBLE_DEVICES"] = id
+
     model_dir = os.path.join(config.store_path, config.experiment_name + '.dir')
     os.makedirs(config.store_path, exist_ok=True)
     os.makedirs(model_dir, exist_ok=True)
@@ -111,13 +117,6 @@ def run(config):
     model = nnetRNN(config.feature_dim * num_frames, config.num_layers, config.hidden_dim,
                     config.num_classes, config.dropout)
 
-    if config.use_gpu:
-        # Set environment variable for GPU ID
-        id = get_device_id()
-        os.environ["CUDA_VISIBLE_DEVICES"] = id
-
-        model = model.cuda()
-
     criterion = nn.CrossEntropyLoss()
 
     lr = config.learning_rate
@@ -141,19 +140,37 @@ def run(config):
     dataset_dev = nnetDatasetSeq(os.path.join(config.egs_dir, config.dev_set))
     data_loader_dev = torch.utils.data.DataLoader(dataset_dev, batch_size=config.batch_size, shuffle=True)
 
-    model_path = os.path.join(model_dir, config.experiment_name + '__epoch_0.model')
-    torch.save({
-        'epoch': 1,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
+    if config.load_checkpoint != "None":
+        ckpt = torch.load(config.load_checkpoint)
+        model.load_state_dict(ckpt["model_state_dict"])
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+        ep_start = ckpt["epoch"]
+        err_p = ckpt['err_p']
+    else:
+        ep_start = 0
+        err_p = 10000000
+        model_path = os.path.join(model_dir, config.experiment_name + '__epoch_0.model')
+        torch.save({
+            'epoch': 1,
+            'model_state_dict': model.state_dict(),
+            'err_p': 10000000,
+            'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
+
+    if config.use_gpu:
+        # Set environment variable for GPU ID
+        id = get_device_id()
+        os.environ["CUDA_VISIBLE_DEVICES"] = id
+
+        model = model.cuda()
 
     ep_loss_tr = []
     ep_fer_tr = []
     ep_loss_dev = []
     ep_fer_dev = []
-    err_p = 0
-    best_model_state = None
-    for epoch_i in range(config.epochs):
+    best_model_state = model.state_dict()
+
+    for epoch_i in range(ep_start, config.epochs):
 
         ####################
         ##### Training #####
@@ -265,6 +282,8 @@ def run(config):
                 'ep_loss_tr': ep_loss_tr,
                 'ep_loss_dev': ep_loss_dev,
                 'dropout': config.dropout,
+                'lr': lr,
+                'err_p': err_p,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
 

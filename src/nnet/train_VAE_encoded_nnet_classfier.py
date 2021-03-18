@@ -7,7 +7,7 @@ import torch
 from torch.autograd import Variable
 from torch import nn, optim
 from torch.utils import data
-from nnet_models import VAEEncodedClassifier, nnetVAE
+from nnet_models import nnetVAE, nnetRNN, nnetLinearWithConv, nnetARVAE
 from datasets import nnetDatasetSeq
 import pickle as pkl
 
@@ -59,6 +59,7 @@ def get_args():
                         help="Percentage of tolerance to leave on dev error for lr scheduling")
     parser.add_argument("--dropout", type=float, default=0, help="Dropout rate")
     parser.add_argument("--weight_decay", type=float, default=0, help="L2 Regularization weight")
+    parser.add_argument("--vae_type", default="modulation", help="Type of VAE, modulation/normal")
 
     # Misc configurations
     parser.add_argument("--num_classes", type=int, default=42,
@@ -92,11 +93,31 @@ def run(config):
 
     # Load VAE model and define classifier
     vae = torch.load(config.vae_model, map_location=lambda storage, loc: storage)
-    vae_model = nnetVAE(vae['feature_dim'] * vae['num_frames'], vae['encoder_num_layers'],
-                        vae['decoder_num_layers'], vae['hidden_dim'], vae['bn_dim'], 0, config.use_gpu)
-    vae_model.load_state_dict(vae["model_state_dict"])
-    model = VAEEncodedClassifier(vae_model, vae['bn_dim'], config.num_layers, config.hidden_dim,
-                                 config.num_classes)
+
+    if config.vae_type == "modulation":
+        vae_model = nnetVAE(vae['feature_dim'] * vae['num_frames'], vae['encoder_num_layers'],
+                            vae['decoder_num_layers'], vae['hidden_dim'], vae['nfilters'] * vae['nrepeats'], 0,
+                            config.use_gpu)
+        vae_model.load_state_dict(vae["model_state_dict"])
+        model = nnetRNN(vae['nfilters'] * vae['nrepeats'], config.num_layers, config.hidden_dim,
+                        config.num_classes, 0)
+
+    elif config.vae_type == "arvae":
+        ar_steps = vae['ar_steps'].split(',')
+        ar_steps = [int(x) for x in ar_steps]
+        ar_steps.append(0)
+        vae_model = nnetARVAE(vae['feature_dim'] * vae['num_frames'], vae['encoder_num_layers'],
+                              vae['decoder_num_layers'], vae['hidden_dim'], vae['bn_dim'], 0, len(ar_steps),
+                              config.use_gpu)
+        vae_model.load_state_dict(vae["model_state_dict"])
+        model = nnetRNN(vae['bn_dim'], config.num_layers, config.hidden_dim,
+                        config.num_classes, 0)
+    else:
+        vae_model = nnetVAE(vae['feature_dim'] * vae['num_frames'], vae['encoder_num_layers'],
+                            vae['decoder_num_layers'], vae['hidden_dim'], vae['bn_dim'], 0, config.use_gpu)
+        vae_model.load_state_dict(vae["model_state_dict"])
+        model = nnetRNN(vae['bn_dim'], config.num_layers, config.hidden_dim,
+                        config.num_classes, 0)
 
     logging.info('Model Parameters: ')
     logging.info('Number of Layers: %d' % (config.num_layers))
@@ -118,6 +139,7 @@ def run(config):
         os.environ["CUDA_VISIBLE_DEVICES"] = id
 
         model = model.cuda()
+        vae_model = vae_model.cuda()
 
     criterion = nn.CrossEntropyLoss()
 
@@ -177,6 +199,12 @@ def run(config):
 
             optimizer.zero_grad()
             # Main forward pass
+            _, batch_x = vae_model(batch_x, batch_l)
+            batch_x = batch_x[0]
+            # utt wise CMVN normalization
+            batch_x = batch_x - torch.cat(batch_x.shape[1] * [torch.mean(batch_x, dim=1)[:, None, :]], dim=1)
+            batch_x = batch_x / torch.sqrt(torch.cat(batch_x.shape[1] * [torch.var(batch_x, dim=1)[:, None, :]], dim=1))
+
             class_out = model(batch_x, batch_l)
             class_out = pad2list(class_out, batch_l)
             lab = pad2list(lab, batch_l)
@@ -217,6 +245,12 @@ def run(config):
 
             optimizer.zero_grad()
             # Main forward pass
+            _, batch_x = vae_model(batch_x, batch_l)
+            batch_x = batch_x[0]
+            # utt wise CMVN normalization
+            batch_x = batch_x - torch.cat(batch_x.shape[1] * [torch.mean(batch_x, dim=1)[:, None, :]], dim=1)
+            batch_x = batch_x / torch.sqrt(torch.cat(batch_x.shape[1] * [torch.var(batch_x, dim=1)[:, None, :]], dim=1))
+
             class_out = model(batch_x, batch_l)
             class_out = pad2list(class_out, batch_l)
             lab = pad2list(lab, batch_l)
@@ -259,6 +293,7 @@ def run(config):
             torch.save({
                 'epoch': epoch_i + 1,
                 'vaeenc': config.vae_model,
+                'vae_type': config.vae_type,
                 'feature_dim': vae['feature_dim'],
                 'num_frames': vae['num_frames'],
                 'num_classes': config.num_classes,

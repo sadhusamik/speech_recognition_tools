@@ -26,7 +26,8 @@ class nnetDatasetSeq(data.Dataset):
         with open(join(path, 'lengths.pkl'), 'rb') as f:
             self.lengths = pickle.load(f)
         self.labels = torch.load(join(self.path, 'labels.pkl'))
-        self.ids = list(self.labels.keys())
+        self.ids = [f for f in listdir(self.path) if f.endswith('.pt')]  # list(self.labels.keys())
+        self.ids = [i for i in self.ids if i in list(self.labels.keys())]
 
     def __len__(self):
         return len(self.ids)

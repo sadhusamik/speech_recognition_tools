@@ -105,7 +105,10 @@ def get_args():
     parser.add_argument("--lrr", type=float, default=0.5, help="Learning rate reduction rate")
     parser.add_argument("--lr_tol", type=float, default=-0.001,
                         help="Percentage of tolerance to leave on dev error for lr scheduling")
+    parser.add_argument("--encoder_grad_scale", type=float, default=1, help="Encoder gradient scaling factor")
     parser.add_argument("--weight_decay", type=float, default=0, help="L2 Regularization weight")
+    parser.add_argument("--load_checkpoint", type=str, default="None", help="Model checkpoint to load")
+    parser.add_argument("--load_previous_model", type=str, default="None", help="Load Model trained on another data")
 
     # Misc configurations
     parser.add_argument("--feature_dim", default=13, type=int, help="The dimension of the input and predicted frame")
@@ -119,6 +122,11 @@ def get_args():
 
 
 def run(config):
+    if config.use_gpu:
+        # Set environment variable for GPU ID
+        id = get_device_id()
+        os.environ["CUDA_VISIBLE_DEVICES"] = id
+
     model_dir = os.path.join(config.store_path, config.experiment_name + '.dir')
     os.makedirs(config.store_path, exist_ok=True)
     os.makedirs(model_dir, exist_ok=True)
@@ -156,6 +164,7 @@ def run(config):
     logging.info('Initial Learning Rate: %f ' % (config.learning_rate))
     logging.info('Learning rate reduction rate: %f ' % (config.lrr))
     logging.info('Weight decay: %f ' % (config.weight_decay))
+    logging.info('Encoder Gradient Scale: %f ' % (config.encoder_grad_scale))
 
     sys.stdout.flush()
 
@@ -163,13 +172,7 @@ def run(config):
                                           config.decoder_num_layers, config.classifier_num_layers, config.hidden_dim,
                                           config.hidden_dim_classifier, config.bn_dim, config.comp_num,
                                           config.num_classes,
-                                          config.use_gpu, enc_scale=0.2)
-    if config.use_gpu:
-        # Set environment variable for GPU ID
-        id = get_device_id()
-        os.environ["CUDA_VISIBLE_DEVICES"] = id
-
-        model = model.cuda()
+                                          config.use_gpu, enc_scale=config.encoder_grad_scale)
 
     lr = config.learning_rate
     criterion = nn.CrossEntropyLoss()
@@ -187,11 +190,38 @@ def run(config):
     else:
         raise NotImplementedError("Learning method not supported for the task")
 
-    model_path = os.path.join(model_dir, config.experiment_name + '__epoch_0.model')
-    torch.save({
-        'epoch': 1,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
+    if config.use_gpu:
+        model = model.cuda()
+
+    if config.load_previous_model != "None":
+        ckpt = torch.load(config.load_previous_model)
+        model.load_state_dict(ckpt["model_state_dict"])
+        model.expand_component(config.use_gpu)
+        previous_mean_p = torch.from_numpy(ckpt["prior_means"])
+        previous_mean_p = torch.cat([previous_mean_p, 5 * (torch.rand(1, config.bn_dim) - 0.5)])
+
+    if config.load_checkpoint != "None":
+        ckpt = torch.load(config.load_checkpoint)
+        model.load_state_dict(ckpt["model_state_dict"])
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+        ep_start = ckpt["epoch"]
+        means_p = torch.from_numpy(ckpt["prior_means"])
+    else:
+        ep_start = 0
+        if config.load_previous_model != "None":
+            means_p = previous_mean_p
+        else:
+            means_p = 5 * (torch.rand(config.comp_num, config.bn_dim) - 0.5)
+        model_path = os.path.join(model_dir, config.experiment_name + '__epoch_0.model')
+        torch.save({
+            'epoch': 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'prior_means': means_p.numpy()}, (open(model_path, 'wb')))
+
+    if config.use_gpu:
+        model = model.cuda()
 
     ep_curl_tr = []
     ep_loss_tr = []
@@ -208,13 +238,10 @@ def run(config):
     dataset_dev = nnetDatasetSeq(os.path.join(config.egs_dir, config.dev_set))
     data_loader_dev = torch.utils.data.DataLoader(dataset_dev, batch_size=config.batch_size, shuffle=True)
 
-    err_p = 0
-    best_model_state = None
+    err_p = 10000000
+    best_model_state = model.state_dict()
 
-    # Prior means
-    means_p = 2 * (torch.rand(config.comp_num, config.bn_dim) - 0.5)
-
-    for epoch_i in range(config.epochs):
+    for epoch_i in range(ep_start, config.epochs):
 
         ####################
         ##### Training #####
@@ -365,23 +392,25 @@ def run(config):
 
         if (epoch_i + 1) % config.model_save_interval == 0:
             model_path = os.path.join(model_dir, config.experiment_name + '__epoch_%d' % (epoch_i + 1) + '.model')
-        torch.save({
-            'epoch': epoch_i + 1,
-            'feature_dim': config.feature_dim,
-            'num_frames': num_frames,
-            'encoder_num_layers': config.encoder_num_layers,
-            'decoder_num_layers': config.decoder_num_layers,
-            'classifier_num_layers': config.classifier_num_layers,
-            'hidden_dim': config.hidden_dim,
-            'hidden_dim_classifier': config.hidden_dim_classifier,
-            'comp_num': config.comp_num,
-            'num_classes': config.num_classes,
-            'bn_dim': config.bn_dim,
-            'ep_curl_tr': ep_curl_tr,
-            'ep_curl_dev': ep_curl_dev,
-            'prior_means': means_p.numpy(),
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
+            torch.save({
+                'epoch': epoch_i + 1,
+                'feature_dim': config.feature_dim,
+                'num_frames': num_frames,
+                'encoder_num_layers': config.encoder_num_layers,
+                'decoder_num_layers': config.decoder_num_layers,
+                'classifier_num_layers': config.classifier_num_layers,
+                'hidden_dim': config.hidden_dim,
+                'hidden_dim_classifier': config.hidden_dim_classifier,
+                'comp_num': config.comp_num,
+                'num_classes': config.num_classes,
+                'bn_dim': config.bn_dim,
+                'ep_curl_tr': ep_curl_tr,
+                'ep_curl_dev': ep_curl_dev,
+                'prior_means': means_p.numpy(),
+                'lr': lr,
+                'encoder_grad_scale': config.encoder_grad_scale,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
 
 
 if __name__ == '__main__':
