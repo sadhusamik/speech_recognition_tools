@@ -34,7 +34,7 @@ use_wordlm=true     # false means to train/use a character LM
 lm_vocabsize=65000  # effective only for word LMs
 lm_resume=          # specify a snapshot file to resume LM training
 lmtag=              # tag for managing LMs
-skip_lm_training=true
+skip_lm_training=false
 
 # model average realted (only for transformer)
 n_average=10                 # the number of ASR models to be averaged
@@ -63,8 +63,8 @@ order=150
 fduration=1.5
 frate=100
 overlap_fraction=0.25
-coeff_num=450
-lp=1; hp=450
+coeff_num=100
+lp=1; hp=100
 coeff_range="$lp,$hp"
 wf=1
 # FILTER CONFIGURATION
@@ -219,7 +219,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     fi
     # compute global CMVN
     compute-cmvn-stats scp:data-fbank/${train_set}/feats.scp data-fbank/${train_set}/cmvn.ark
-  
+  fi  
     # dump features for training
     if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_tr_dir}/storage ]; then
     utils/create_split_dir.pl \
@@ -241,7 +241,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
             data-fbank/${rtask}/feats.scp data-fbank/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
             ${feat_recog_dir}
     done
-fi
+#fi
 
 dict=data/lang_1char/${train_set}_units.txt
 echo "dictionary: ${dict}"
