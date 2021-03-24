@@ -22,7 +22,7 @@ resume_epoch=""
 
 # feature configuration
 do_delta=false
-no_norm=false
+no_norm=false # This option does not change anything
 
 # sample filtering
 min_io_delta=4  # samples with `len(input) - len(output) * min_io_ratio < min_io_delta` will be removed.
@@ -34,7 +34,7 @@ lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
 # rnnlm related
-skip_lm_training=true  # for only using end-to-end ASR model without LM
+skip_lm_training=false  # for only using end-to-end ASR model without LM
 use_wordlm=true         # false means to train/use a character LM
 lm_vocabsize=65000      # effective only for word LMs
 lm_resume=              # specify a snapshot file to resume LM training
@@ -55,8 +55,8 @@ order=150
 fduration=1.5
 frate=100
 overlap_fraction=0.25
-coeff_num=150
-lp=0; hp=149
+coeff_num=100
+lp=0; hp=100
 coeff_range="$lp,$hp"
 wf=1
 # FILTER CONFIGURATION
@@ -71,7 +71,7 @@ scale=20
 shape=1.5
 pk=3
 
-append="chunk_normalized"
+append=""
 if [ $gw == "yes" ] ;then 
   gamma_weight="$scale,$shape,$pk"
   append="${append}_gw_sc_${scale}_sh_${shape}_pk_${pk}"
@@ -91,10 +91,10 @@ else
   exit 1
 fi
 
-add_lindist_test_data=true
+add_lindist_test_data=false
 noises="babble street"
 snrs="20 40"
-reverbs="small_room"
+reverbs=
 
 # data
 wsj0=/export/corpora5/LDC/LDC93S6B
@@ -186,7 +186,7 @@ feat_dt_dir=${dumpdir}/${train_dev}/delta${do_delta}; mkdir -p ${feat_dt_dir}
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
-    
+   
     echo "stage 1: Feature Generation"
     # Generate the fbank features; by default 80-dimensional fbanks with pitch on each frame
     for x in $train_set $train_dev $train_test; do
@@ -230,7 +230,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         utils/fix_data_dir.sh data/${tset}
       done
     done
-    
+
     for reverb  in $reverbs; do 
        if $no_norm; then 
         tset=test_eval92_nf${nfilters}_ord${order}_fdur${fduration}_range${lp}${hp}_ola${overlap_fraction}_frate${frate}_${reverb}_nonorm_${append}
@@ -253,7 +253,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
           data/${tset} ${fbankdir}
         utils/fix_data_dir.sh data/${tset}
     done
-
+  
     if $add_lindist_test_data; then 
       tset=test_eval92_nf${nfilters}_ord${order}_fdur${fduration}_range${lp}${hp}_ola${overlap_fraction}_frate${frate}_diff_${append}
       [ ! -d data/$tset ] && ./utils/copy_data_dir.sh data/test_eval92 data/$tset
@@ -324,6 +324,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
          data/${train_set} ${dict} > ${feat_tr_dir}/data.json
     data2json.sh --feat ${feat_dt_dir}/feats.scp --nlsyms ${nlsyms} \
          data/${train_dev} ${dict} > ${feat_dt_dir}/data.json
+  
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
         data2json.sh --feat ${feat_recog_dir}/feats.scp \

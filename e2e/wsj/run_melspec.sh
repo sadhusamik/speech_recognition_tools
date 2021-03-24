@@ -22,7 +22,7 @@ resume_epoch=""
 
 # feature configuration
 do_delta=false
-no_norm=false
+no_norm=false # This option does not change anything
 
 # sample filtering
 min_io_delta=4  # samples with `len(input) - len(output) * min_io_ratio < min_io_delta` will be removed.
@@ -34,7 +34,7 @@ lm_config=conf/lm.yaml
 decode_config=conf/decode.yaml
 
 # rnnlm related
-skip_lm_training=true  # for only using end-to-end ASR model without LM
+skip_lm_training=false  # for only using end-to-end ASR model without LM
 use_wordlm=true         # false means to train/use a character LM
 lm_vocabsize=65000      # effective only for word LMs
 lm_resume=              # specify a snapshot file to resume LM training
@@ -60,7 +60,7 @@ om_w=1
 alp=1
 fixed=1
 bet=2.5
-fb="cochlear"
+fb="mel"
 
 append=""
 
@@ -75,10 +75,10 @@ else
   exit 1
 fi
 
-add_lindist_test_data=true
+add_lindist_test_data=false
 noises="babble street"
 snrs="20 40"
-reverbs="small_room"
+reverbs=
 
 # data
 wsj0=/export/corpora5/LDC/LDC93S6B
@@ -253,11 +253,11 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         /export/b{10,11,12,13}/${USER}/espnet-data/egs/wsj/asr1/dump/${train_dev}/delta${do_delta}/storage \
         ${feat_dt_dir}/storage
     fi
-    dump.sh --cmd "$train_cmd" --nj 32 --do_delta ${do_delta} --no_norm ${no_norm}\
+    dump.sh --cmd "$train_cmd" --nj 32 --do_delta ${do_delta} \
         data/${train_set}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/train ${feat_tr_dir}
-    dump.sh --cmd "$train_cmd" --nj 4 --do_delta ${do_delta} --no_norm ${no_norm}\
+    dump.sh --cmd "$train_cmd" --nj 4 --do_delta ${do_delta} \
         data/${train_dev}/feats.scp data/${train_set}/cmvn.ark exp/dump_feats/dev ${feat_dt_dir}
-    
+
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}; mkdir -p ${feat_recog_dir}
         dump.sh --cmd "$train_cmd" --nj 4 --do_delta ${do_delta} --no_norm ${no_norm}\
@@ -271,7 +271,8 @@ nlsyms=data/lang_1char/non_lang_syms.txt
 
 echo "dictionary: ${dict}"
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
-    ### Task dependent. You have to check non-linguistic symbols used in the corpus.
+
+     ### Task dependent. You have to check non-linguistic symbols used in the corpus.
     echo "stage 2: Dictionary and Json Data Preparation"
     mkdir -p data/lang_1char/
 
@@ -290,6 +291,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
          data/${train_set} ${dict} > ${feat_tr_dir}/data.json
     data2json.sh --feat ${feat_dt_dir}/feats.scp --nlsyms ${nlsyms} \
          data/${train_dev} ${dict} > ${feat_dt_dir}/data.json
+
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}
         data2json.sh --feat ${feat_recog_dir}/feats.scp \
