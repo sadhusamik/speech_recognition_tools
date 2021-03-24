@@ -21,7 +21,7 @@ resume_epoch=""
 
 # feature configuration
 do_delta=false
-no_norm=false
+no_norm=false #This option does not make any changes
 
 # config files
 preprocess_config=conf/no_preprocess.yaml
@@ -219,7 +219,7 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     fi
     # compute global CMVN
     compute-cmvn-stats scp:data-fbank/${train_set}/feats.scp data-fbank/${train_set}/cmvn.ark
-  fi  
+
     # dump features for training
     if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_tr_dir}/storage ]; then
     utils/create_split_dir.pl \
@@ -231,17 +231,17 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         /export/b{10,11,12,13}/${USER}/espnet-data/egs/reverb/asr1/dump/${train_dev}/delta${do_delta}/storage \
         ${feat_dt_dir}/storage
     fi
-    dump.sh --cmd "$train_cmd" --nj 32 --do_delta ${do_delta} --no_norm ${no_norm}\
+    dump.sh --cmd "$train_cmd" --nj 32 --do_delta ${do_delta} \
         data-fbank/${train_set}/feats.scp data-fbank/${train_set}/cmvn.ark exp/dump_feats/train ${feat_tr_dir}
-    dump.sh --cmd "$train_cmd" --nj 4 --do_delta ${do_delta} --no_norm ${no_norm}\
+    dump.sh --cmd "$train_cmd" --nj 4 --do_delta ${do_delta} \
         data-fbank/${train_dev}/feats.scp data-fbank/${train_set}/cmvn.ark exp/dump_feats/dev ${feat_dt_dir}
     for rtask in ${recog_set}; do
         feat_recog_dir=${dumpdir}/${rtask}/delta${do_delta}; mkdir -p ${feat_recog_dir}
-        dump.sh --cmd "$train_cmd" --nj 4 --do_delta ${do_delta} --no_norm ${no_norm}\
+        dump.sh --cmd "$train_cmd" --nj 4 --do_delta ${do_delta} \
             data-fbank/${rtask}/feats.scp data-fbank/${train_set}/cmvn.ark exp/dump_feats/recog/${rtask} \
             ${feat_recog_dir}
     done
-#fi
+fi
 
 dict=data/lang_1char/${train_set}_units.txt
 echo "dictionary: ${dict}"

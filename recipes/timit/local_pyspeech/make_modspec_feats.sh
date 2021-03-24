@@ -12,6 +12,7 @@ frate=100
 coeff_0=5
 coeff_n=30
 order=50
+fbank_type="mel,1"
 cmd=queue.pl
 add_opts=
 ark_cmd=$KALDI_ROOT/src/featbin/copy-feats
@@ -57,6 +58,7 @@ if [ -f $segment ]; then
       $log_dir/segments.JOB \
       $feat_dir/modspec_${name}.JOB \
       $add_opts \
+      --fbank_type=$fbank_type \
       --nfilters=$nfilters \
       --nmodulations=$nmodulations \
       --fduration=$fduration \
@@ -91,6 +93,7 @@ elif [ -f $scp ]; then
       $log_dir/wav_${name}.JOB.scp \
       $feat_dir/modspec_${name}.JOB \
       $add_opts \
+      --fbank_type=$fbank_type \
       --nfilters=$nfilters \
       --coeff_0=$coeff_0 \
       --coeff_n=$coeff_n \

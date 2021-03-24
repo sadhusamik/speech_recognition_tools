@@ -15,6 +15,7 @@ add_reverb=clean
 add_noise=clean
 fbank_type="mel,1"
 gamma_weight="None"
+odd_mod_zero=false
 
 frate=100
 cmd=queue.pl
@@ -22,6 +23,8 @@ add_opts=
 src_dir='../../src'
 spectrum_type=log
 write_utt2num_frames=false
+lifter_config=
+check_for_segment="data/train" # Check this data directory for pre-computed segment files
 
 . parse_options.sh || exit 1;
 
@@ -38,22 +41,88 @@ mkdir -p $feat_dir
 
 name=`basename $data_dir`
 scp=$data_dir/wav.scp
-segment=$data_dir/segment
+segment=$data_dir/segments
 log_dir=$data_dir/log
 mkdir -p $log_dir
+
+if $odd_mod_zero; then 
+  add_opts="$add_opts --odd_mod_zero"
+fi
 
 if $write_utt2num_frames; then
     add_opts="$add_opts --write_utt2num_frames"
 fi
 
-# split files
+if [ ! -z $lifter_config ] ; then
+    echo $0": Using liftering config from $lifter_config"
+    add_opts="$add_opts --lifter_config $lifter_config"
+fi
 
 echo $0": Splitting segment OR scp files for parallalization..."
 
 if [ -f $segment ]; then
 
-    ## TODO: THIS PART IS NOT IMPLEMENTED YET! Do not extract features for segment files
-    echo "Not Implemented"
+  echo $0:"Checking $check_for_segment for precomputed segment files..."
+  name_check=`basename $check_for_segment`
+
+    if [ -f $check_for_segment/log/segment_dump/${name_check}_segmentdump.ark ] ; then
+    echo $0:"Using segment files from $check_for_segment ..."
+    scp_dump_name=$check_for_segment/log/segment_dump/${name_check}_segmentdump
+    else
+    echo $0:"No segment files found in data directory $check_for_segment ..."
+    scp_dump_name=$log_dir/segment_dump/${name}_segmentdump
+    echo $0": Dumping Segment files..."
+    mkdir -p $log_dir/segment_dump
+
+    scp_dump_name=$log_dir/segment_dump/${name}_segmentdump
+    extract-segments scp,p:$scp $segment \
+    ark,scp:${scp_dump_name}.ark,${scp_dump_name}.scp
+    fi
+
+    echo $0": Splitting Segment files..."
+
+    split_segments=""
+    for n in $(seq $nj); do
+    split_segments="$split_segments $log_dir/segments.$n"
+    done
+    utils/split_scp.pl ${scp_dump_name}.scp $split_segments || exit 1;
+
+    echo $0": Computing Mel Spectral features for segment files..."
+
+    $cmd --mem 5G JOB=1:$nj \
+      $log_dir/feats_${name}.JOB.log \
+      python ${src_dir}/featgen/computeFDLPSpectrogram.py \
+        $log_dir/segments.JOB \
+        $feat_dir/melspec_${name}.JOB \
+        $add_opts \
+        --scp_type="segment" \
+        --fbank_type=$fbank_type \
+        --gamma_weight=$gamma_weight \
+        --add_reverb=$add_reverb \
+        --add_noise=$add_noise \
+        --coeff_num=$coeff_num \
+        --coeff_range=$coeff_range \
+        --order=$order \
+        --overlap_fraction=$overlap_fraction \
+        --nfilters=$nfilters \
+        --fduration=$fduration \
+        --frate=$frate  || exit 1
+    # concatenate all scp files together
+
+    for n in $(seq $nj); do
+      cat $feat_dir/melspec_$name.$n.scp || exit 1;
+    done > $data_dir/feats.scp
+
+    rm $log_dir/segments.*
+
+    # concatenate all length files together
+    if $write_utt2num_frames; then
+        for n in $(seq $nj); do
+          cat $feat_dir/melspec_$name.$n.len || exit 1;
+        done > $data_dir/utt2num_frames
+    fi
+
+
 elif [ -f $scp ]; then
 
   echo "$0: Splitting scp files..."
@@ -108,5 +177,4 @@ else
   exit 1;
 fi
 
-
-echo $0": Finished computed mfcc features for $name"
+echo $0": Finished computing FDLP spectrum features for $name"
