@@ -63,8 +63,8 @@ order=150
 fduration=1.5
 frate=100
 overlap_fraction=0.25
-coeff_num=100
-lp=1; hp=100
+coeff_num=300
+lp=1; hp=300
 coeff_range="$lp,$hp"
 wf=1
 # FILTER CONFIGURATION
