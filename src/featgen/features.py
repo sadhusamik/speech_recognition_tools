@@ -219,11 +219,10 @@ def createFbankCochlear(nfilters, nfft, srate, om_w=0.2, alp=2.5, fixed=1, bet=2
     return filts
 
 
-def computeLpcFast(signal, order):
-    # y=np.correlate(signal,signal,'full')
-    # y=y[(len(signal)-1):]
+def computeLpcFast(signal, order, keepreal=True):
     y = np.fft.ifft(np.fft.fft(signal, len(signal)) * np.conj(np.fft.fft(signal, len(signal))))
-    y = np.real(y)
+    if keepreal:
+        y = np.real(y)
     xlpc = lpc_solve.solve_toeplitz(y[0:order], -y[1:order + 1])
     xlpc = np.append(1, xlpc)
     gg = y[0] + np.sum(xlpc * y[1:order + 2])
@@ -233,7 +232,7 @@ def computeLpcFast(signal, order):
 
 def computeModSpecFromLpc(gg, xlpc, lim):
     xlpc[1:] = -xlpc[1:]
-    lpc_cep = np.zeros(lim)
+    lpc_cep = np.zeros(lim, dtype=xlpc.dtype)
     lpc_cep[0] = np.log(np.sqrt(gg))
     lpc_cep[1] = xlpc[1]
     if xlpc.shape[0] < lim:
