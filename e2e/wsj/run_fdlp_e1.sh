@@ -48,6 +48,9 @@ n_average=10                 # the number of ASR models to be averaged
 use_valbest_average=false    # if true, the validation `n_average`-best ASR models will be averaged.
                              # if false, the last `n_average` ASR models will be averaged.
 
+# Confidence Model related
+skip_confmod_training=false
+
 ## FDLP spectrum parameters ##
 
 nfilters=80
@@ -71,7 +74,7 @@ scale=20
 shape=1.5
 pk=3
 
-append=""
+append="DEBUGGED"
 if [ $gw == "yes" ] ;then 
   gamma_weight="$scale,$shape,$pk"
   append="${append}_gw_sc_${scale}_sh_${shape}_pk_${pk}"
@@ -347,7 +350,6 @@ fi
 # you can skip this by setting skip_lm_training=true
 
 
-
 if [ -z ${lmtag} ]; then
     lmtag=$(basename ${lm_config%.*})
     if [ ${use_wordlm} = true ]; then
@@ -453,9 +455,35 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --valid-json ${feat_dt_dir}/data.json
 fi
 
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! ${skip_confmod_training}; then
+    echo "stage 5: Confidence VAE model training"
+
+    local_pyspeech/train_VAE.sh \
+      --stage 0 \
+      --vae_type "normal" \
+      --use_gpu  true \
+      --skip_cmvn true \
+      --out_dist "laplace" \
+      --data_dir ${dumpdir} \
+      --hybrid_dir ${expdir}/confidence_model \
+      --feat_type FDLP_spectrum \
+      --train_set ${train_set}/delta${do_delta}\
+      --dev_set ${train_dev}/delta${do_delta} \
+      --nn_name WSJ_px_VAE_enc2l_dec2l_300nodes \
+      --encoder_num_layers 2 \
+      --decoder_num_layers 2 \
+      --weight_decay 0 \
+      --num_egs_jobs 10 \
+      --ali_type "ignore" \
+      --hidden_dim 512 \
+      --bn_dim 100 \
+      --batch_size 64 \
+      --epochs 100 || exit 1 ;
+fi
+
 skip_lm_training=false
-if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
-    echo "stage 5: Decoding"
+if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+    echo "stage 6: Decoding"
     nj=32
     if [[ $(get_yaml.py ${train_config} model-module) = *transformer* ]] || \
        [[ $(get_yaml.py ${train_config} model-module) = *conformer* ]] || \

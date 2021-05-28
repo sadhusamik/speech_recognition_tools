@@ -25,7 +25,8 @@ def get_config():
     parser.add_argument("--feat_type", type=str, default=None,
                         help="feat_type(cmvn/cmvn_utt/pca),path_to_cmvn or pca mat, set as None for raw features")
     parser.add_argument("--concat_feats", default=None, help="Put left and right context as left,right")
-    parser.add_argument("--ali_type", default="phone", help="phone/pdf to get phone or pdf alignment labels")
+    parser.add_argument("--ali_type", default="phone",
+                        help="phone/pdf/ignore to get phone or pdf alignment labels or ignore alignment dumping")
     parser.add_argument("--max_seq_len", default=512, type=int,
                         help="The maximum length (number of frames) of each sequence; sequences will be truncated or padded (with zero vectors) to this length")
 
@@ -156,7 +157,11 @@ def run():
         p.join()
 
     get_all_lengths(config.save_dir)
-    get_labels(config.ali_dir, config.ali_type, config)
+    if config.ali_type == 'ignore':
+        print('No alignment directory provided, not dumping alignment')
+    else:
+        get_labels(config.ali_dir, config.ali_type, config)
+
 
     # if not os.path.isfile(os.path.join(egs_path, 'egs.config')):
     egs_config = {}

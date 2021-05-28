@@ -41,15 +41,22 @@ reg_weight=0.1
 bn_bits=16
 
 # Feature config
-feature_dim=13
-left_context=6
-right_context=6
+feature_dim=
+left_context=
+right_context=
 max_seq_len=512
 ali_type="phone"
 ali_append=
 per_utt_cmvn=true
+skip_cmvn=false
+do_pca=false
+out_dist='gauss'
 
 . utils/parse_options.sh || exit 1;
+
+if [ -z ${feature_dim} ] ; then
+  feature_dim=`feat-to-dim scp:${data_dir}/${train_set}/feats.scp -`
+fi
 
 mkdir -p $hybrid_dir 
 log_dir=$hybrid_dir/log
@@ -99,6 +106,11 @@ case $vae_type in
     vae_script=train_VAE.py
     add_vae_opts="--encoder_num_layers=$encoder_num_layers --decoder_num_layers=$decoder_num_layers --hidden_dim=$hidden_dim --bn_dim=$bn_dim"
     ;;
+  normal_AE)
+    echo "$0: Train simple VAE"
+    vae_script=train_VAE.py
+    add_vae_opts="--only_AE --encoder_num_layers=$encoder_num_layers --decoder_num_layers=$decoder_num_layers --hidden_dim=$hidden_dim --bn_dim=$bn_dim"
+    ;;
   normal_post)
     echo "$0: Train simple VAE"
     vae_script=train_posterior_VAE.py
@@ -119,7 +131,9 @@ echo "$0: nn_name=$nn_name"
 
 if [ $stage -le 0 ]; then 
 
-  if $per_utt_cmvn; then
+  if $skip_cmvn; then
+    echo "$0: No cmvn computed..."
+  elif $per_utt_cmvn; then
     cmvn_type=cmvn_utt
     for x in $train_set $test_set $dev_set; do
       cmvn_path=`realpath $hybrid_dir/perutt_cmvn_${x}_${feat_type}`
@@ -133,22 +147,44 @@ if [ $stage -le 0 ]; then
     compute-cmvn-stats scp:$data_dir/$train_set/feats.scp $cmvn_path  || exit 1;
   fi
 
+  if $skip_cmvn && $do_pca; then
+    echo "$0: Computing a PCA transform for the training data"
+    utils/shuffle_list.pl $data_dir/${train_set}/feats.scp | sort |\
+      est-pca scp:- $hybrid_dir/pca_all.mat
+  fi
+
   for x in $train_set $dev_set $test_set ; do
     egs_dir=$hybrid_dir/egs/$x
-    cmvn_path=$hybrid_dir/perutt_cmvn_${x}_${feat_type}.scp
     mkdir -p $egs_dir
+
+    if $skip_cmvn; then
+      cmvn_opts=""
+    elif $per_utt_cmvn; then
+      cmvn_path=$hybrid_dir/perutt_cmvn_${x}_${feat_type}.scp
+      cmvn_opts="--feat_type=$cmvn_type,$cmvn_path"
+    else
+      cmvn_path=$hybrid_dir/global_cmvn_${feat_type}
+      cmvn_opts="--feat_type=$cmvn_type,$cmvn_path"
+    fi
+
+    if $skip_cmvn && $do_pca; then
+      cmvn_opts="--feat_type=pca,$hybrid_dir/pca_all.mat"
+    fi
+
+    if [ ! -z ${left_context} ] && [ ! -z ${right_context} ] ; then
+      cmvn_opts+=" --concat_feats=${left_context},${right_context}"
+    fi
+
     if [ ! -z $ali_append ]; then 
       ali_name=${ali_append}_${x}
     else
       ali_name=$x
     fi
     
-    python3 $nnet_src/data_prep_for_seq.py \
+    python3 $nnet_src/data_prep_for_seq.py $cmvn_opts\
       --num_jobs=$num_egs_jobs \
-      --feat_type=$cmvn_type,$cmvn_path \
       --ali_type=$ali_type \
       --max_seq_len=$max_seq_len \
-      --concat_feats=${left_context},${right_context} \
       $data_dir/$x/feats.scp \
       ${hmm_dir}_ali_${ali_name} \
       $egs_dir || exit 1;
@@ -167,6 +203,7 @@ if [ $stage -le 1 ]; then
       --epochs=$epochs \
       --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
+      --out_dist=$out_dist \
       --model_save_interval=$model_save_interval \
       --experiment_name=exp_1 \
       $hybrid_dir/egs \
@@ -182,6 +219,7 @@ if [ $stage -le 1 ]; then
       --epochs=$epochs \
       --weight_decay=$weight_decay \
       --feature_dim=$feature_dim \
+      --out_dist=$out_dist \
       --model_save_interval=$model_save_interval \
       --experiment_name=exp_1 \
       $hybrid_dir/egs \

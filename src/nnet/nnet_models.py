@@ -360,17 +360,21 @@ class nnetVAE(nn.Module):
     """
 
     def __init__(self, input_size, num_layers_enc, num_layers_dec, hidden_size, bn_size,
-                 dropout, use_gpu=True):
+                 dropout, use_gpu=True, only_AE=False):
         super(nnetVAE, self).__init__()
 
         self.vae_encoder = VAEEncoder(input_size, num_layers_enc, hidden_size, bn_size, dropout)
         self.vae_decoder = VAEDecoder(bn_size, num_layers_dec, hidden_size, input_size)
         self.sampler = latentSampler(use_gpu)
+        self.only_AE = only_AE
 
     def forward(self, inputs, lengths):
         latent = self.vae_encoder(inputs, lengths)
-        inputs = self.sampler(latent)
-        return self.vae_decoder(inputs, lengths), latent
+        if self.only_AE:
+            return self.vae_decoder(latent[0], lengths), latent
+        else:
+            inputs = self.sampler(latent)
+            return self.vae_decoder(inputs, lengths), latent
 
 
 class nnetARVAE(nn.Module):
@@ -594,7 +598,7 @@ class nnetCurlMultistreamClassifier(nn.Module):
         self.comp_num = self.comp_num + 1
 
         if use_gpu:
-        # Add extra Gaussian
+            # Add extra Gaussian
             self.curl_encoder.means.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size).cuda())
             self.curl_encoder.var.append(nn.Linear(in_features=self.hidden_size, out_features=self.bn_size).cuda())
             updated_y = nn.Linear(in_features=self.hidden_size, out_features=self.comp_num).cuda()

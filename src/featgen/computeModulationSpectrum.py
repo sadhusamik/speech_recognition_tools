@@ -42,17 +42,21 @@ def getFeats(args, srate=16000, window=np.hanning):
 
     # Set up mel-filterbank
     fbank_type = args.fbank_type.strip().split(',')
+    if args.complex_modulation:
+        dur = int(fduration * srate)
+    else:
+        dur = int(2 * fduration * srate)
 
     if fbank_type[0] == "mel":
         if len(fbank_type) < 2:
             raise ValueError('Mel filter bank not configured properly....')
-        fbank = createFbank(nfilters, int(2 * fduration * srate), srate, warp_fact=float(fbank_type[1]))
+        fbank = createFbank(nfilters, dur, srate, warp_fact=float(fbank_type[1]))
     elif fbank_type[0] == "cochlear":
         if len(fbank_type) < 6:
             raise ValueError('Cochlear filter bank not configured properly....')
         if int(fbank_type[3]) == 1:
             print('%s: Alpha is fixed and will not change as a function of the center frequency...' % sys.argv[0])
-        fbank = createFbankCochlear(nfilters, int(2 * fduration * srate), srate, om_w=float(fbank_type[1]),
+        fbank = createFbankCochlear(nfilters, dur, srate, om_w=float(fbank_type[1]),
                                     alp=float(fbank_type[2]), fixed=int(fbank_type[3]), bet=float(fbank_type[4]),
                                     warp_fact=float(fbank_type[5]))
     else:
@@ -67,10 +71,22 @@ def getFeats(args, srate=16000, window=np.hanning):
         else:
             feat_len = temp[0::2].shape[0]
 
+    elif args.complex_modulation:
+        if args.absolute_value:
+            feat_len = coeff_num
+        else:
+            feat_len = 2 * coeff_num
     else:
         feat_len = coeff_num
-    if args.fft_modulation:
-        feat_len = int(feat_len / 2)
+
+    if args.compensate_noise:
+        if args.complex_modulation:
+            fmax = coeff_num / (fduration)
+            faxis = np.linspace(0, fmax, coeff_n)
+        else:
+            fmax = coeff_num / (2 * fduration)
+            faxis = np.linspace(0, fmax, coeff_n)
+
     if args.no_window:
         print('%s: Using square windows' % sys.argv[0])
         window = sq_wind
@@ -134,7 +150,11 @@ def getFeats(args, srate=16000, window=np.hanning):
                 time_frames = np.array([frame for frame in
                                         getFrames(signal, srate, frate, fduration, window)])
 
-                cos_trans = freqAnalysis.dct(time_frames) / np.sqrt(2 * int(srate * fduration))
+                if args.complex_modulation:
+                    cos_trans = freqAnalysis.ifft(time_frames)
+                    cos_trans = cos_trans[:, :int(fduration * srate / 2)]
+                else:
+                    cos_trans = freqAnalysis.dct(time_frames) / np.sqrt(2 * int(srate * fduration))
 
                 [frame_num, ndct] = np.shape(cos_trans)
 
@@ -148,21 +168,26 @@ def getFeats(args, srate=16000, window=np.hanning):
                     for j in range(nfilters):
                         filt = fbank[j, 0:-1]
                         band_dct = filt * cos_trans[i, :]
-                        xlpc, gg = computeLpcFast(band_dct, order)  # Compute LPC coefficients
-
-                        if args.fft_modulation:
-                            # xx = np.log(gg) - np.log(np.abs(fft(xlpc[0::2])))
-                            xx = np.log(gg) - np.log(np.abs(fft(xlpc[0::2], band_dct.shape[0])))
-                            temp2 = 2 * ifft(xx)
-                            temp2 = np.abs(temp2)[:feat_len]
-                        else:
+                        if args.complex_modulation:
+                            xlpc, gg = computeLpcFast(band_dct, order, keepreal=False)  # Compute LPC coefficients
                             mod_spec = computeModSpecFromLpc(gg, xlpc, coeff_n)
-                            temp2 = mod_spec[coeff_0 - 1:coeff_n]
-                            sig_len = cos_trans[i, :].shape[0]
+                            if args.compensate_noise:
+                                mod_spec = mod_spec * faxis
+                            if args.absolute_value:
+                                temp2 = np.abs(mod_spec[coeff_0 - 1:coeff_n])
+                            else:
+                                temp2 = np.append(np.real(mod_spec[coeff_0 - 1:coeff_n]),
+                                                  np.imag(mod_spec[coeff_0 - 1:coeff_n]))
+                        else:
+                            xlpc, gg = computeLpcFast(band_dct, order)
+                            mod_spec = np.real(computeModSpecFromLpc(gg, xlpc, coeff_n))
+                            if args.compensate_noise:
+                                mod_spec = mod_spec * faxis
+                            if args.absolute_value:
+                                temp2 = np.abs(mod_spec[coeff_0 - 1:coeff_n])
+                            else:
+                                temp2 = mod_spec[coeff_0 - 1:coeff_n]
 
-                            if args.real_cepstrum:
-                                temp2 = np.abs(ifft(np.log(np.abs(np.exp(fft(temp2, 2 * sig_len)))))[0:sig_len])[
-                                        coeff_0 - 1:coeff_n]
                         if args.keep_even:
                             if coeff_0 % 2 == 0:
                                 each_feat[j, :] = temp2[1::2]
@@ -196,9 +221,10 @@ if __name__ == '__main__':
     parser.add_argument('--fbank_type', type=str, default='mel,1',
                         help='mel,warp_fact OR cochlear,om_w,alpa,fixed,beta,warp_fact')
     parser.add_argument('--set_unity_gain', action='store_true', help='Set LPC gain to 1 (True)')
-    parser.add_argument('--real_cepstrum', action='store_true', help='Computes real cepstrum')
     parser.add_argument('--no_window', action='store_true', help='Keeps the square window')
-    parser.add_argument('--fft_modulation', action='store_true', help='Computes modulation by fft and not recursion')
+    parser.add_argument('--complex_modulation', action='store_true', help='Computes modulation by fft and not dct')
+    parser.add_argument('--compensate_noise', action='store_true', help='Compensate 1/f noise in modulation spectrum')
+    parser.add_argument('--absolute_value', action='store_true', help='Compute absolute value of modulation spectrum')
     parser.add_argument('--kaldi_cmd', help='Kaldi command to use to get ark files')
     args = parser.parse_args()
 

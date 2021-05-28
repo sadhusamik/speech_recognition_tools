@@ -139,7 +139,7 @@ def get_output(config):
             out = model(mat, batch_l)
             ae_out, latent_out = all_px_models[idx](mat, batch_l)
             latent_out = (latent_out[0][0, :, :], latent_out[1][0, :, :])
-            px = np.exp(vae_loss(mat[0, :, :], ae_out[0, :, :], latent_out).data.numpy())
+            px = (vae_loss(mat[0, :, :], ae_out[0, :, :], latent_out).data.numpy())
             px_save.append(np.mean(px))
             pcx = sm(out[0, :, :])
             px = np.tile(px, (pcx.shape[1], 1)).T

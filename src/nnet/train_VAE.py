@@ -8,7 +8,7 @@ from torch.autograd import Variable
 from torch import nn, optim
 from torch.utils import data
 from nnet_models import nnetVAE
-from datasets import nnetDatasetSeq
+from datasets import nnetDatasetSeq, nnetDatasetSeqAE
 import pickle as pkl
 
 import subprocess
@@ -31,11 +31,30 @@ def compute_fer(x, l):
     return err
 
 
-def vae_loss(x, ae_out, latent_out):
-    log_lhood = torch.mean(-0.5 * torch.pow((x - ae_out), 2) - 0.5 * np.log(2 * np.pi * 1))
+def vae_loss(x, ae_out, latent_out, out_dist='gauss'):
+    if out_dist == 'gauss':
+        log_lhood = torch.mean(-0.5 * torch.pow((x - ae_out), 2) - 0.5 * np.log(2 * np.pi * 1))
+    elif out_dist == 'laplace':
+        log_lhood = torch.mean(-torch.abs(x - ae_out) - np.log(2))
+    else:
+        logging.error("Output distribution of VAE can be 'gauss' or 'laplace'")
+        sys.exit(1)
+
     kl_loss = 0.5 * torch.mean(
         1 - torch.pow(latent_out[0], 2) - torch.pow(torch.exp(latent_out[1]), 2) + 2 * latent_out[1])
     return log_lhood, kl_loss
+
+
+def ae_loss(x, ae_out, out_dist='gauss'):
+    if out_dist == 'gauss':
+        loss = torch.mean(torch.pow((x - ae_out), 2))
+    elif out_dist == 'laplace':
+        loss = torch.mean(torch.abs(x - ae_out))
+    else:
+        logging.error("Output distribution of VAE can be 'gauss' or 'laplace'")
+        sys.exit(1)
+
+    return loss
 
 
 def pad2list(padded_seq, lengths):
@@ -63,8 +82,8 @@ def get_args():
     parser.add_argument("--train_set", default="train_si284", help="Name of the training datatset")
     parser.add_argument("--dev_set", default="test_dev93", help="Name of development dataset")
     parser.add_argument("--clip_thresh", type=float, default=1, help="Gradient clipping threshold")
-    parser.add_argument("--lrr", type=float, default=0.5, help="Learning rate reduction rate")
-    parser.add_argument("--lr_tol", type=float, default=0.5,
+    parser.add_argument("--lrr", type=float, default=0.9, help="Learning rate reduction rate")
+    parser.add_argument("--lr_tol", type=float, default=0.05,
                         help="Percentage of tolerance to leave on dev error for lr scheduling")
     parser.add_argument("--weight_decay", type=float, default=0, help="L2 Regularization weight")
 
@@ -75,6 +94,8 @@ def get_args():
     parser.add_argument("--use_gpu", action="store_true", help="Set to use GPU, code will automatically detect GPU ID")
     parser.add_argument("--load_data_workers", default=10, type=int, help="Number of parallel data loaders")
     parser.add_argument("--experiment_name", default="exp_run", type=str, help="Name of this experiment")
+    parser.add_argument("--out_dist", default="gauss", help="Output distribution of VAE, 'gauss' or 'laplace'")
+    parser.add_argument("--only_AE", action="store_true", help="Will train only an Autoencoder and not VAE")
 
     return parser.parse_args()
 
@@ -98,8 +119,12 @@ def run(config):
 
     # Load feature configuration
     egs_config = pkl.load(open(os.path.join(config.egs_dir, config.train_set, 'egs.config'), 'rb'))
-    context = egs_config['concat_feats'].split(',')
-    num_frames = int(context[0]) + int(context[1]) + 1
+    context = egs_config['concat_feats']
+    if context is not None:
+        context = context.split(',')
+        num_frames = int(context[0]) + int(context[1]) + 1
+    else:
+        num_frames = 1
 
     logging.info('Model Parameters: ')
     logging.info('Encoder Number of Layers: %d' % (config.encoder_num_layers))
@@ -113,11 +138,17 @@ def run(config):
     logging.info('Initial Learning Rate: %f ' % (config.learning_rate))
     logging.info('Learning rate reduction rate: %f ' % (config.lrr))
     logging.info('Weight decay: %f ' % (config.weight_decay))
-
+    logging.info('Output distribution: %s ' % (config.out_dist))
+    if config.only_AE:
+        logging.info('Training only an Autoencoder')
     sys.stdout.flush()
 
-    model = nnetVAE(config.feature_dim * num_frames, config.encoder_num_layers,
-                    config.decoder_num_layers, config.hidden_dim, config.bn_dim, 0, config.use_gpu)
+    if config.only_AE:
+        model = nnetVAE(config.feature_dim * num_frames, config.encoder_num_layers,
+                        config.decoder_num_layers, config.hidden_dim, config.bn_dim, 0, config.use_gpu, only_AE=True)
+    else:
+        model = nnetVAE(config.feature_dim * num_frames, config.encoder_num_layers,
+                        config.decoder_num_layers, config.hidden_dim, config.bn_dim, 0, config.use_gpu)
 
     if config.use_gpu:
         # Set environment variable for GPU ID
@@ -147,17 +178,21 @@ def run(config):
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
 
-    ep_vae_rec_tr = []
-    ep_vae_kl_tr = []
-    ep_vae_rec_dev = []
-    ep_vae_kl_dev = []
+    if config.only_AE:
+        ep_ae_rec_tr = []
+        ep_ae_rec_dev = []
+    else:
+        ep_vae_rec_tr = []
+        ep_vae_kl_tr = []
+        ep_vae_rec_dev = []
+        ep_vae_kl_dev = []
 
     # Load Datasets
 
-    dataset_train = nnetDatasetSeq(os.path.join(config.egs_dir, config.train_set))
+    dataset_train = nnetDatasetSeqAE(os.path.join(config.egs_dir, config.train_set))
     data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=config.batch_size, shuffle=True)
 
-    dataset_dev = nnetDatasetSeq(os.path.join(config.egs_dir, config.dev_set))
+    dataset_dev = nnetDatasetSeqAE(os.path.join(config.egs_dir, config.dev_set))
     data_loader_dev = torch.utils.data.DataLoader(dataset_dev, batch_size=config.batch_size, shuffle=True)
 
     err_p = 0
@@ -170,12 +205,15 @@ def run(config):
         ####################
 
         model.train()
-        train_vae_rec_losses = []
-        train_vae_kl_losses = []
+        if config.only_AE:
+            train_ae_losses = []
+        else:
+            train_vae_rec_losses = []
+            train_vae_kl_losses = []
 
         # Main training loop
 
-        for batch_x, batch_l, lab in data_loader_train:
+        for batch_x, batch_l in data_loader_train:
             _, indices = torch.sort(batch_l, descending=True)
             if config.use_gpu:
                 batch_x = Variable(batch_x[indices]).cuda()
@@ -191,20 +229,27 @@ def run(config):
 
             # Convert all the weird tensors to frame-wise form
             batch_x = pad2list(batch_x, batch_l)
-
             ae_out = pad2list(ae_out, batch_l)
-            latent_out = (pad2list(latent_out[0], batch_l), pad2list(latent_out[1], batch_l))
-            loss = vae_loss(batch_x, ae_out, latent_out)
+            if config.only_AE:
+                loss = ae_loss(batch_x, ae_out, out_dist=config.out_dist)
+                train_ae_losses.append(loss.item())
+                loss.backward()
 
-            train_vae_rec_losses.append(loss[0].item())
-            train_vae_kl_losses.append(loss[1].item())
+            else:
+                latent_out = (pad2list(latent_out[0], batch_l), pad2list(latent_out[1], batch_l))
+                loss = vae_loss(batch_x, ae_out, latent_out, out_dist=config.out_dist)
+                train_vae_rec_losses.append(loss[0].item())
+                train_vae_kl_losses.append(loss[1].item())
+                (-loss[0] - loss[1]).backward()
 
-            (-loss[0] - loss[1]).backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip_thresh)
             optimizer.step()
 
-        ep_vae_rec_tr.append(np.mean(train_vae_rec_losses))
-        ep_vae_kl_tr.append(np.mean(train_vae_kl_losses))
+        if config.only_AE:
+            ep_ae_rec_tr.append(np.mean(train_ae_losses))
+        else:
+            ep_vae_rec_tr.append(np.mean(train_vae_rec_losses))
+            ep_vae_kl_tr.append(np.mean(train_vae_kl_losses))
 
         ######################
         ##### Validation #####
@@ -214,10 +259,13 @@ def run(config):
 
         with torch.set_grad_enabled(False):
 
-            val_vae_rec_losses = []
-            val_vae_kl_losses = []
+            if config.only_AE:
+                val_ae_losses = []
+            else:
+                val_vae_rec_losses = []
+                val_vae_kl_losses = []
 
-            for batch_x, batch_l, lab in data_loader_dev:
+            for batch_x, batch_l in data_loader_dev:
                 _, indices = torch.sort(batch_l, descending=True)
                 if config.use_gpu:
                     batch_x = Variable(batch_x[indices]).cuda()
@@ -231,55 +279,98 @@ def run(config):
 
                 # Convert all the weird tensors to frame-wise form
                 batch_x = pad2list(batch_x, batch_l)
-
                 ae_out = pad2list(ae_out, batch_l)
-                latent_out = (pad2list(latent_out[0], batch_l), pad2list(latent_out[1], batch_l))
-                loss = vae_loss(batch_x, ae_out, latent_out)
+                if config.only_AE:
+                    loss = ae_loss(batch_x, ae_out, out_dist=config.out_dist)
+                    val_ae_losses.append(loss.item())
+                else:
+                    latent_out = (pad2list(latent_out[0], batch_l), pad2list(latent_out[1], batch_l))
+                    loss = vae_loss(batch_x, ae_out, latent_out, out_dist=config.out_dist)
 
-                val_vae_rec_losses.append(loss[0].item())
-                val_vae_kl_losses.append(loss[1].item())
+                    val_vae_rec_losses.append(loss[0].item())
+                    val_vae_kl_losses.append(loss[1].item())
 
-            ep_vae_rec_dev.append(np.mean(val_vae_rec_losses))
-            ep_vae_kl_dev.append(np.mean(val_vae_kl_losses))
+            if config.only_AE:
+                ep_ae_rec_dev.append(np.mean(val_ae_losses))
+            else:
+                ep_vae_rec_dev.append(np.mean(val_vae_rec_losses))
+                ep_vae_kl_dev.append(np.mean(val_vae_kl_losses))
+
 
         # Manage learning rate
-        if epoch_i == 0:
-            err_p = -np.mean(val_vae_rec_losses) - np.mean(val_vae_kl_losses)
-            best_model_state = model.state_dict()
-        else:
-            if -np.mean(val_vae_rec_losses) - np.mean(val_vae_kl_losses) > (100 + config.lr_tol) * err_p / 100:
-                logging.info(
-                    "Val loss went up, Changing learning rate from {:.6f} to {:.6f}".format(lr, config.lrr * lr))
-                lr = config.lrr * lr
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = lr
-                model.load_state_dict(best_model_state)
+        if config.only_AE:
+            if epoch_i == 0:
+                err_p = np.mean(val_ae_losses)
+                best_model_state = model.state_dict()
             else:
+                if np.mean(val_ae_losses) > (100 - config.lr_tol) * err_p / 100:
+                    logging.info(
+                        "Val loss went up, Changing learning rate from {:.6f} to {:.6f}".format(lr, config.lrr * lr))
+                    lr = config.lrr * lr
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = lr
+                    model.load_state_dict(best_model_state)
+                else:
+                    err_p = np.mean(val_ae_losses)
+                    best_model_state = model.state_dict()
+
+            print_log = "Epoch: {:d} ((lr={:.6f})) Tr AE Error: {:.3f} :: Val AE Error: {:.3f}".format(
+                epoch_i + 1, lr, ep_ae_rec_tr[-1], ep_ae_rec_dev[-1])
+
+            logging.info(print_log)
+
+            if (epoch_i + 1) % config.model_save_interval == 0:
+                model_path = os.path.join(model_dir, config.experiment_name + '__epoch_%d' % (epoch_i + 1) + '.model')
+            torch.save({
+                'epoch': epoch_i + 1,
+                'feature_dim': config.feature_dim,
+                'num_frames': num_frames,
+                'encoder_num_layers': config.encoder_num_layers,
+                'decoder_num_layers': config.decoder_num_layers,
+                'hidden_dim': config.hidden_dim,
+                'bn_dim': config.bn_dim,
+                'ep_ae_rec_tr': ep_ae_rec_tr,
+                'ep_ae_rec_dev': ep_ae_rec_dev,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
+        else:
+            if epoch_i == 0:
                 err_p = -np.mean(val_vae_rec_losses) - np.mean(val_vae_kl_losses)
                 best_model_state = model.state_dict()
+            else:
+                if -np.mean(val_vae_rec_losses) - np.mean(val_vae_kl_losses) > (100 - config.lr_tol) * err_p / 100:
+                    logging.info(
+                        "Val loss went up, Changing learning rate from {:.6f} to {:.6f}".format(lr, config.lrr * lr))
+                    lr = config.lrr * lr
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = lr
+                    model.load_state_dict(best_model_state)
+                else:
+                    err_p = -np.mean(val_vae_rec_losses) - np.mean(val_vae_kl_losses)
+                    best_model_state = model.state_dict()
 
-        print_log = "Epoch: {:d} ((lr={:.6f})) Tr VAE Log-likelihood: {:.3f} :: Val VAE Log-likelihood: {:.3f}".format(
-            epoch_i + 1, lr,
-            ep_vae_kl_tr[-1] + ep_vae_rec_tr[-1], ep_vae_kl_dev[-1] + ep_vae_rec_dev[-1])
+            print_log = "Epoch: {:d} ((lr={:.6f})) Tr VAE Log-likelihood: {:.3f} :: Val VAE Log-likelihood: {:.3f}".format(
+                epoch_i + 1, lr,
+                ep_vae_kl_tr[-1] + ep_vae_rec_tr[-1], ep_vae_kl_dev[-1] + ep_vae_rec_dev[-1])
 
-        logging.info(print_log)
+            logging.info(print_log)
 
-        if (epoch_i + 1) % config.model_save_interval == 0:
-            model_path = os.path.join(model_dir, config.experiment_name + '__epoch_%d' % (epoch_i + 1) + '.model')
-        torch.save({
-            'epoch': epoch_i + 1,
-            'feature_dim': config.feature_dim,
-            'num_frames': num_frames,
-            'encoder_num_layers': config.encoder_num_layers,
-            'decoder_num_layers': config.decoder_num_layers,
-            'hidden_dim': config.hidden_dim,
-            'bn_dim': config.bn_dim,
-            'ep_vae_kl_tr': ep_vae_kl_tr,
-            'ep_vae_rec_tr': ep_vae_rec_tr,
-            'ep_vae_kl_dev': ep_vae_kl_dev,
-            'ep_vae_rec_dev': ep_vae_rec_dev,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
+            if (epoch_i + 1) % config.model_save_interval == 0:
+                model_path = os.path.join(model_dir, config.experiment_name + '__epoch_%d' % (epoch_i + 1) + '.model')
+            torch.save({
+                'epoch': epoch_i + 1,
+                'feature_dim': config.feature_dim,
+                'num_frames': num_frames,
+                'encoder_num_layers': config.encoder_num_layers,
+                'decoder_num_layers': config.decoder_num_layers,
+                'hidden_dim': config.hidden_dim,
+                'bn_dim': config.bn_dim,
+                'ep_vae_kl_tr': ep_vae_kl_tr,
+                'ep_vae_rec_tr': ep_vae_rec_tr,
+                'ep_vae_kl_dev': ep_vae_kl_dev,
+                'ep_vae_rec_dev': ep_vae_rec_dev,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict()}, (open(model_path, 'wb')))
 
 
 if __name__ == '__main__':

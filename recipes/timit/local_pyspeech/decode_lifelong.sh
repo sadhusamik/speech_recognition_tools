@@ -76,7 +76,7 @@ if [ $stage -le 0 ]; then
 
   cmvn_path=$hybrid_dir/perutt_cmvn_${test_set}_${feat_type}
   compute-cmvn-stats \
-    scp:$data_dir/$test_set/feats.scp \
+    scp,p:$data_dir/$test_set/feats.scp \
     ark,scp:$cmvn_path.ark,$cmvn_path.scp  || exit 1;
   
   add_opts="--override_trans=cmvn_utt,$cmvn_path.scp"

@@ -55,6 +55,8 @@ wsj0=/export/corpora5/LDC/LDC93S6B            # JHU setup
 wsj1=/export/corpora5/LDC/LDC94S13B           # JHU setup
 wavdir=${PWD}/wav # place to store WAV files
 
+# Confidence Model related
+skip_confmod_training=false
 
 ## FDLP spectrum parameters ##
 
@@ -63,8 +65,8 @@ order=150
 fduration=1.5
 frate=100
 overlap_fraction=0.25
-coeff_num=300
-lp=1; hp=300
+coeff_num=450
+lp=1; hp=450
 coeff_range="$lp,$hp"
 wf=1
 # FILTER CONFIGURATION
@@ -181,6 +183,7 @@ fi
 
 feat_tr_dir=${dumpdir}/${train_set}/delta${do_delta}; mkdir -p ${feat_tr_dir}
 feat_dt_dir=${dumpdir}/${train_dev}/delta${do_delta}; mkdir -p ${feat_dt_dir}
+
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
     ### Task dependent. You have to design training and dev sets by yourself.
     ### But you can utilize Kaldi recipes in most cases
@@ -361,9 +364,50 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --valid-json ${feat_dt_dir}/data.json
 fi
 
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ] && ! ${skip_confmod_training}; then
+    echo "stage 5: Confidence VAE model training"
+
+    data_dump=true
+    if $data_dump; then
+      # compute global CMVN
+      compute-cmvn-stats scp:data-fbank/${train_set_temp1}/feats.scp data-fbank/${train_set_temp1}/cmvn.ark
+
+      feat_tr_dir_onlyreverb=${dumpdir}/${train_set_temp1}/delta${do_delta}; mkdir -p ${feat_tr_dir_onlyreverb}
+      # Dump only reverb data first
+      if [[ $(hostname -f) == *.clsp.jhu.edu ]] && [ ! -d ${feat_tr_dir_onlyreverb}/storage ]; then
+      utils/create_split_dir.pl \
+          /export/b{10,11,12,13}/${USER}/espnet-data/egs/reverb/asr1/dump/${train_set_temp1}/delta${do_delta}/storage \
+          ${feat_tr_dir_onlyreverb}/storage
+      fi
+      dump.sh --cmd "$train_cmd" --nj 32 --do_delta ${do_delta} \
+          data-fbank/${train_set_temp1}/feats.scp data-fbank/${train_set_temp1}/cmvn.ark exp/dump_feats/train ${feat_tr_dir_onlyreverb}
+    fi
+    local_pyspeech/train_VAE.sh \
+      --stage 0 \
+      --vae_type "normal" \
+      --use_gpu  true \
+      --skip_cmvn true \
+      --out_dist "laplace" \
+      --data_dir ${dumpdir} \
+      --hybrid_dir ${expdir}/confidence_model \
+      --feat_type FDLP_spectrum \
+      --train_set ${train_set_temp1}/delta${do_delta}\
+      --dev_set ${train_dev}/delta${do_delta} \
+      --nn_name WSJ_px_VAE_enc2l_dec2l_300nodes \
+      --encoder_num_layers 2 \
+      --decoder_num_layers 2 \
+      --weight_decay 0 \
+      --num_egs_jobs 10 \
+      --ali_type "ignore" \
+      --hidden_dim 512 \
+      --bn_dim 100 \
+      --batch_size 64 \
+      --epochs 100 || exit 1 ;
+fi
+
 skip_lm_training=false
 recog_set_reduced=`echo $recog_set | cut -d' ' -f1-4`
-if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
     echo "stage 5: Decoding"
     nj=32
 
