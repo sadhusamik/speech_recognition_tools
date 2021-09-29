@@ -8,7 +8,7 @@ from torch.autograd import Variable
 from torch import nn, optim
 from torch.utils import data
 from nnet_models import nnetVAE
-from datasets import nnetDatasetSeq, nnetDatasetSeqAE
+from datasets import nnetDatasetSeq, nnetDatasetSeqAE, nnetDatasetSeqAEConcat
 import pickle as pkl
 
 import subprocess
@@ -80,7 +80,9 @@ def get_args():
     parser.add_argument("--learning_rate", default=0.001, type=float, help="Initial learning rate")
     parser.add_argument("--epochs", default=100, type=int, help="Number of training epochs")
     parser.add_argument("--train_set", default="train_si284", help="Name of the training datatset")
+    parser.add_argument("--concat_train_set", type=str, default=None, help="Name of the second training datatset")
     parser.add_argument("--dev_set", default="test_dev93", help="Name of development dataset")
+    parser.add_argument("--concat_dev_set", type=str,  default=None, help="Name of second development dataset")
     parser.add_argument("--clip_thresh", type=float, default=1, help="Gradient clipping threshold")
     parser.add_argument("--lrr", type=float, default=0.9, help="Learning rate reduction rate")
     parser.add_argument("--lr_tol", type=float, default=0.05,
@@ -88,6 +90,9 @@ def get_args():
     parser.add_argument("--weight_decay", type=float, default=0, help="L2 Regularization weight")
 
     # Misc configurations
+    parser.add_argument("--concat_egs_dir", type=str, default=None,
+                        help="Additional path to the preprocessed data for concatenation")
+    parser.add_argument("--use_transformer", action="store_true", help="Set to use transformer layers instead of RNN")
     parser.add_argument("--feature_dim", default=13, type=int, help="The dimension of the input and predicted frame")
     parser.add_argument("--model_save_interval", type=int, default=10,
                         help="Number of epochs to skip before every model save")
@@ -120,11 +125,19 @@ def run(config):
     # Load feature configuration
     egs_config = pkl.load(open(os.path.join(config.egs_dir, config.train_set, 'egs.config'), 'rb'))
     context = egs_config['concat_feats']
+    if config.concat_egs_dir:
+        assert config.concat_train_set is not None
+        assert config.concat_dev_set is not None
+
+        egs_config_concat = pkl.load(open(os.path.join(config.concat_egs_dir, config.concat_train_set, 'egs.config'), 'rb'))
+        context_concat = egs_config_concat['concat_feats']
+
+    num_frames = 0
     if context is not None:
         context = context.split(',')
-        num_frames = int(context[0]) + int(context[1]) + 1
+        num_frames += int(context[0]) + int(context[1]) + 1
     else:
-        num_frames = 1
+        num_frames += 1
 
     logging.info('Model Parameters: ')
     logging.info('Encoder Number of Layers: %d' % (config.encoder_num_layers))
@@ -141,14 +154,18 @@ def run(config):
     logging.info('Output distribution: %s ' % (config.out_dist))
     if config.only_AE:
         logging.info('Training only an Autoencoder')
+    if config.use_transformer:
+        logging.info('Training with Transformer layers instead of RNN')
     sys.stdout.flush()
 
     if config.only_AE:
         model = nnetVAE(config.feature_dim * num_frames, config.encoder_num_layers,
-                        config.decoder_num_layers, config.hidden_dim, config.bn_dim, 0, config.use_gpu, only_AE=True)
+                        config.decoder_num_layers, config.hidden_dim, config.bn_dim, 0, config.use_gpu, only_AE=True,
+                        use_transformer=config.use_transformer)
     else:
         model = nnetVAE(config.feature_dim * num_frames, config.encoder_num_layers,
-                        config.decoder_num_layers, config.hidden_dim, config.bn_dim, 0, config.use_gpu)
+                        config.decoder_num_layers, config.hidden_dim, config.bn_dim, 0, config.use_gpu,
+                        use_transformer=config.use_transformer)
 
     if config.use_gpu:
         # Set environment variable for GPU ID
@@ -188,12 +205,18 @@ def run(config):
         ep_vae_kl_dev = []
 
     # Load Datasets
+    if config.concat_egs_dir:
+        dataset_train = nnetDatasetSeqAEConcat(os.path.join(config.egs_dir, config.train_set), os.path.join(config.concat_egs_dir, config.concat_train_set))
+        data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=config.batch_size, shuffle=True)
 
-    dataset_train = nnetDatasetSeqAE(os.path.join(config.egs_dir, config.train_set))
-    data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=config.batch_size, shuffle=True)
+        dataset_dev = nnetDatasetSeqAEConcat(os.path.join(config.egs_dir, config.dev_set), os.path.join(config.concat_egs_dir, config.concat_dev_set))
+        data_loader_dev = torch.utils.data.DataLoader(dataset_dev, batch_size=config.batch_size, shuffle=True)
+    else:
+        dataset_train = nnetDatasetSeqAE(os.path.join(config.egs_dir, config.train_set))
+        data_loader_train = torch.utils.data.DataLoader(dataset_train, batch_size=config.batch_size, shuffle=True)
 
-    dataset_dev = nnetDatasetSeqAE(os.path.join(config.egs_dir, config.dev_set))
-    data_loader_dev = torch.utils.data.DataLoader(dataset_dev, batch_size=config.batch_size, shuffle=True)
+        dataset_dev = nnetDatasetSeqAE(os.path.join(config.egs_dir, config.dev_set))
+        data_loader_dev = torch.utils.data.DataLoader(dataset_dev, batch_size=config.batch_size, shuffle=True)
 
     err_p = 0
     best_model_state = None
@@ -295,7 +318,6 @@ def run(config):
             else:
                 ep_vae_rec_dev.append(np.mean(val_vae_rec_losses))
                 ep_vae_kl_dev.append(np.mean(val_vae_kl_losses))
-
 
         # Manage learning rate
         if config.only_AE:

@@ -12,9 +12,13 @@ feat_type=mfcc
 hmm_dir=exp/tri3
 use_gpu=true
 train_set=train
+concat_train_set=train
 dev_set=dev
+concat_dev_set=dev
 nn_name=nnet_gru_3lenc_1lclas_1lae_256nodes
 num_egs_jobs=2
+egs_dir=
+concat_egs_dir=
 
 # Neural network config
 encoder_num_layers=2
@@ -39,6 +43,7 @@ ar_steps=3,5
 filt_type=ellip
 reg_weight=0.1
 bn_bits=16
+use_transformer=false
 
 # Feature config
 feature_dim=
@@ -54,8 +59,12 @@ out_dist='gauss'
 
 . utils/parse_options.sh || exit 1;
 
-if [ -z ${feature_dim} ] ; then
+if [ -z ${feature_dim} ] && [ -z ${egs_dir} ]; then
   feature_dim=`feat-to-dim scp:${data_dir}/${train_set}/feats.scp -`
+fi
+
+if [ -z ${egs_dir} ] ; then
+    if [ -z ${feature_dim} ] ; then echo "Set feature_dim when providing egs_dir"; exit 1; fi
 fi
 
 mkdir -p $hybrid_dir 
@@ -129,7 +138,7 @@ esac
 
 echo "$0: nn_name=$nn_name"
 
-if [ $stage -le 0 ]; then 
+if [ $stage -le 0 ] && [ -z ${egs_dir} ]; then
 
   if $skip_cmvn; then
     echo "$0: No cmvn computed..."
@@ -189,7 +198,22 @@ if [ $stage -le 0 ]; then
       ${hmm_dir}_ali_${ali_name} \
       $egs_dir || exit 1;
   done
+
 fi
+
+if [ -z ${egs_dir} ]; then
+  egs_dir=$hybrid_dir/egs
+fi
+
+if [ ! -z ${concat_egs_dir} ]; then
+  add_vae_opts="$add_vae_opts --concat_egs_dir=${concat_egs_dir} --concat_train_set=${concat_train_set} --concat_dev_set=${concat_dev_set}"
+fi
+
+if ${use_transformer}; then
+   add_vae_opts="$add_vae_opts --use_transformer"
+fi
+
+
 
 if [ $stage -le 1 ]; then 
   if $use_gpu; then 
@@ -206,7 +230,7 @@ if [ $stage -le 1 ]; then
       --out_dist=$out_dist \
       --model_save_interval=$model_save_interval \
       --experiment_name=exp_1 \
-      $hybrid_dir/egs \
+      $egs_dir \
       $hybrid_dir/$nn_name || exit 1;
   else
 
@@ -222,7 +246,7 @@ if [ $stage -le 1 ]; then
       --out_dist=$out_dist \
       --model_save_interval=$model_save_interval \
       --experiment_name=exp_1 \
-      $hybrid_dir/egs \
+      $egs_dir \
       $hybrid_dir/$nn_name || exit 1;
   fi
 
